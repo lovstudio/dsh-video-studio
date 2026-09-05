@@ -1,6 +1,14 @@
 import type { Asset, AssetKind } from "../types";
 
 export const API = "/video-studio/api";
+export class StudioApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 export async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -17,8 +25,9 @@ export async function request<T>(
   });
   const data = await response.json().catch(() => null);
   if (!response.ok)
-    throw new Error(
+    throw new StudioApiError(
       data?.error || data?.message || `请求失败 (${response.status})`,
+      response.status,
     );
   return data as T;
 }

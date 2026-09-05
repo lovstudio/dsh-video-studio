@@ -1,6 +1,6 @@
 # DSH Video Studio
 
-A local-first editing workbench for DeepSeek Harness. Remotion powers both the interactive player and MP4 export. GSAP animations seek to the composition frame, so seeking and rendering use the same motion state.
+A video editing view inside DeepSeek Harness conversations. Keep the DSH workspace, conversation, and composer alongside the timeline. Remotion powers preview and MP4 export; GSAP animations seek to the same composition frame.
 
 [简体中文](README.zh.md)
 
@@ -13,9 +13,9 @@ npx @deepseek-ai/dsh plugin --profile web add -w github:lovstudio/dsh-video-stud
 npx @deepseek-ai/dsh web
 ```
 
-If DSH is already running, restart it after installation. Open **Video Studio** from the sidebar. The GitHub repository includes the built host, editor, and Remotion composition; users do not need to build the plugin. The editor is served by the harness itself and inherits its signed-cookie authentication. An isolated iframe keeps the editor's React and Remotion versions separate from the harness UI.
+If DSH is already running, restart it after installation. Select a workspace and open the **Video** tab in an existing conversation. A blank conversation offers **Start editing** above the composer, without requiring a model key or sending a message. The sidebar entry helps you choose a workspace. The GitHub repository includes all runtime builds; no manual build is required.
 
-To pin a release, append its tag: `github:lovstudio/dsh-video-studio#v0.1.0`.
+To pin a release, append its tag: `github:lovstudio/dsh-video-studio#v0.2.0`.
 
 ![DSH Video Studio editor](tests/expected/editor.png)
 
@@ -24,6 +24,10 @@ To pin a release, append its tag: `github:lovstudio/dsh-video-studio#v0.1.0`.
 The editor combines a media library, a frame-accurate preview, clip properties, and four timeline lanes: video, audio, titles, and captions. Import media, arrange and trim clips, split at the playhead, edit titles and captions, change volume and framing, and undo or redo edits. Portrait and square canvases share the same project model. The initial title sequence is an editable example, with no external media dependency.
 
 Project JSON and managed media stay on the host. Server saves are atomic. JSON backups preserve references to media; they do not embed the source files. Render jobs use an immutable project snapshot and expose progress, cancellation, and a downloadable MP4. SRT import/export works without an ASR account.
+
+**Hand off to DSH** saves the current project and adds its ID, selected clip, and playhead to the current conversation's draft. Existing draft text is preserved; you review and send it. DSH Agent can read and edit the same project using the registered tools. Saved Agent changes refresh the timeline, and concurrent edits produce a version conflict with local backup and reload actions.
+
+Projects created inside DSH belong to that workspace. Existing unbound projects are associated when you choose Hand off to DSH. Tool access uses the executing session's actual workspace path; tools cannot claim an unbound project or read another workspace's project. The iframe only isolates the Remotion/React runtime, while DSH owns navigation, conversation state, input, tools, and authentication.
 
 ## Development
 
@@ -38,7 +42,7 @@ pnpm test:render # actual Chrome render and frame determinism
 pnpm dev
 ```
 
-The local development server serves the built editor at `http://127.0.0.1:4318/video-studio/`. Rebuild after source changes. It binds to loopback and rejects foreign origins.
+The standalone development server at `http://127.0.0.1:4318/video-studio/` is for editor debugging. It does not provide the DSH conversation or Agent integration. Validate the plugin through `dsh web`. Rebuild after source changes. The development server binds to loopback and rejects foreign origins.
 
 To test a local checkout in the DSH web profile after building:
 
@@ -56,6 +60,7 @@ All HTTP routes live under `/video-studio/`. The DSH host checks the connection 
 | -------------------------- | ----------------------------------------------------- |
 | `GET api/capabilities`     | Actual ASR and rendering availability                 |
 | `GET api/projects`         | Saved projects                                        |
+| `GET api/projects/:id`     | Latest saved project and its revision                 |
 | `PUT api/projects/:id`     | Validate and atomically save a project                |
 | `POST api/assets`          | Stream a media upload into the managed asset store    |
 | `GET media/:id`            | Authenticated managed media, including Range requests |
@@ -80,19 +85,21 @@ The placeholder endpoint above must be replaced with your provider's documented 
 
 The durable store, HTTP controller, provider registry, and background job queue are separate modules. `src/core` owns editing invariants and SRT conversion; `src/remotion` owns shared visual output; `src/editor` owns interaction state; `src/shell` owns only DSH integration. New effects should use the same frame-driven composition, and new providers should implement the existing contract rather than adding browser credentials or a second project format.
 
+DSH tools are `video_studio_list`, `video_studio_read`, `video_studio_update`, `video_studio_render`, and `video_studio_job`. Updates require a revision previously read by the same session. The GUI sends `x-studio-revision` (`new` for creation, otherwise the saved `updatedAt`); stale writes return 409. Render tools use the editor's queue and output route, and only the submitting session can inspect or cancel its jobs.
+
 ## Model Experience
 
 ### What the model sees
 
-This package adds a user workbench. It does not automatically register model tools, modify prompts, or inject media into conversations. Project JSON can be inspected and edited by an authorized local agent through normal filesystem access.
+The model receives five video tool definitions. Project content is returned when it calls a tool; the Hand off action prepares a user-reviewed draft with project and clip references. Media binaries and ASR credentials are not injected into conversations.
 
 ### Token effect
 
-No additional tool schema or background transcript is added to the model context.
+Five stable tool schemas are added. Reading a project consumes context proportional to its clips and metadata. Playback does not stream frames or transcripts into model context.
 
 ### KV Cache effect
 
-No prompt mutation or cache invalidation is introduced by opening the editor.
+Tool definitions remain stable during editing and playback. Project state appears in explicit user messages or tool results rather than a continuously changing system prompt.
 
 ## Known Limitations and Deferred Work
 

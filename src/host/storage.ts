@@ -130,13 +130,55 @@ export class StudioStore {
       right.updatedAt.localeCompare(left.updatedAt),
     );
   }
-  saveProject(id: string, value: unknown): Promise<Project> {
+  async project(id: string): Promise<Project> {
+    await this.writes;
+    return projectSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(this.root, "projects", `${assertId(id)}.json`),
+          "utf8",
+        ),
+      ),
+    );
+  }
+  saveProject(
+    id: string,
+    value: unknown,
+    expectedUpdatedAt?: string | null,
+  ): Promise<Project> {
     assertId(id);
     const snapshot = structuredClone(value);
     const write = this.writes.then(async () => {
       const project = await this.canonicalProject(snapshot);
       if (project.id !== id) throw new HttpError(400, "工程 ID 与路径不一致");
-      const committed = { ...project, updatedAt: new Date().toISOString() };
+      let previous: Project | undefined;
+      try {
+        previous = projectSchema.parse(
+          JSON.parse(
+            await readFile(join(this.root, "projects", `${id}.json`), "utf8"),
+          ),
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (
+        expectedUpdatedAt !== undefined &&
+        expectedUpdatedAt !== (previous?.updatedAt ?? null)
+      ) {
+        throw new HttpError(
+          409,
+          "工程已被 DSH Agent 或其他窗口更新。请载入最新版本后继续编辑。",
+        );
+      }
+      const committed = {
+        ...project,
+        updatedAt: new Date(
+          Math.max(
+            Date.now(),
+            previous ? Date.parse(previous.updatedAt) + 1 : 0,
+          ),
+        ).toISOString(),
+      };
       await atomicJson(join(this.root, "projects", `${id}.json`), committed);
       return committed;
     });

@@ -18,7 +18,8 @@ export declare class StudioStore {
     asset(id: string): Promise<StoredAsset>;
     canonicalProject(value: unknown): Promise<Project>;
     projects(): Promise<Project[]>;
-    saveProject(id: string, value: unknown): Promise<Project>;
+    project(id: string): Promise<Project>;
+    saveProject(id: string, value: unknown, expectedUpdatedAt?: string | null): Promise<Project>;
     upload(req: IncomingMessage, query: URLSearchParams, signal: AbortSignal, maxBytes?: number): Promise<Asset>;
     dispose(): Promise<void>;
 }

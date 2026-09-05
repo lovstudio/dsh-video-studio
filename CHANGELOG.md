@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Replace the fullscreen workbench overlay with a native DSH conversation Video tab and an inline editor for blank conversations.
+- Associate projects with the real DSH workspace and prepare creative requests in the existing conversation draft.
+- Register workspace-scoped project read/update and video render/job tools for DSH Agent.
+- Synchronize saved Agent edits into the timeline and protect concurrent GUI/Agent writes with revision checks and recovery controls.
+
 ## 0.1.0
 
 - Add a DSH sidebar workbench with an isolated React editor.

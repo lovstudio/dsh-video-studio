@@ -57,6 +57,12 @@ export const projectSchema = z
     assets: z.array(assetSchema).max(500),
     clips: z.array(clipSchema).max(3000),
     updatedAt: z.string().datetime(),
+    dsh: z
+      .object({
+        workspacePath: z.string().min(1).max(4096),
+        sessionId: z.string().min(1).max(240),
+      })
+      .optional(),
   })
   .superRefine((project, ctx) => {
     const ids = new Set<string>();

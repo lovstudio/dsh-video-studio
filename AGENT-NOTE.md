@@ -1,6 +1,8 @@
 # Video Studio implementation note
 
-The DSH extension is a small authenticated host and sidebar shell. Its heavy editing UI is an isolated same-origin application, because embedding a second React runtime and Remotion directly in the harness module loader would couple the plugin to the harness UI version.
+The editor mounts in DSH's native `conversation.view` slot. Blank sessions do not render that slot in rc.1, so `conversation.input.dock` provides direct inline editing without requiring a model request. DSH retains the sidebar, conversation, workspace, and composer. The same-origin iframe isolates React/Remotion versions rather than providing a separate product shell.
+
+The host context bridge accepts only the current iframe and same origin. Handoff appends to the real session draft and never submits. Project ownership uses the workspace path, while model tool authorization derives from the executing session's cwd, never tool arguments. Both GUI and Agent writes compare a saved revision inside the serialized store commit; stale snapshots cannot overwrite newer edits.
 
 The durable project is a versioned, frame-based JSON document. Preview and export consume that document through the same Remotion composition. GSAP timelines stay paused and seek to the current composition frame; no wall-clock animation is used for exported visuals. Editing commands preserve source-frame offsets, and caption conversion quantizes absolute endpoints so adjacent cues do not accumulate rounding gaps.
 

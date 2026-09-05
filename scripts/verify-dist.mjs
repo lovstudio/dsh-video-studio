@@ -58,7 +58,7 @@ for (const directory of ["studio", "remotion"]) {
 const plugin = await import("../lib/index.js");
 assert.equal(typeof plugin.apply, "function");
 assert.equal("default" in plugin, false);
-assert.deepEqual(plugin.inject, ["webServer", "connection"]);
+assert.deepEqual(plugin.inject, ["webServer", "connection", "tools"]);
 console.log(
   "Prebuilt host, editor, renderer, declarations and DSH patch are present.",
 );

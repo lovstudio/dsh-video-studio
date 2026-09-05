@@ -81,6 +81,55 @@ async function upload(origin: string, body: Buffer = PNG): Promise<Asset> {
   return (await response.json()) as Asset;
 }
 
+test("GUI and Agent commits compare the same revision atomically and preserve the winning edit", async () => {
+  const app = await fixture();
+  try {
+    const initial = createProject(false);
+    const url = `${app.origin}/video-studio/api/projects/${initial.id}`;
+    const save = (project: Project, revision: string) =>
+      fetch(url, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          "x-studio-revision": revision,
+        },
+        body: JSON.stringify(project),
+      });
+    assert.equal((await fetch(url)).status, 404);
+    assert.equal(
+      (await fetch(url, { method: "PUT", body: JSON.stringify(initial) }))
+        .status,
+      428,
+    );
+    const created = await save(initial, "new");
+    assert.equal(created.status, 200);
+    const first = (await created.json()) as Project;
+    assert.equal((await save(initial, "new")).status, 409);
+    const responses = await Promise.all([
+      save({ ...first, name: "GUI revision" }, first.updatedAt),
+      save({ ...first, name: "Agent revision" }, first.updatedAt),
+    ]);
+    assert.deepEqual(responses.map((r) => r.status).sort(), [200, 409]);
+    const winner = (await responses
+      .find((r) => r.status === 200)!
+      .json()) as Project;
+    const persisted = (await (await fetch(url)).json()) as Project;
+    assert.equal(persisted.name, winner.name);
+    assert.ok(persisted.updatedAt > first.updatedAt);
+    assert.equal(
+      (await save({ ...first, name: "Stale autosave" }, first.updatedAt))
+        .status,
+      409,
+    );
+    assert.equal(
+      (await app.runtime.store.project(initial.id)).name,
+      winner.name,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
 test("host protects index, API, media and exports before dispatch", async () => {
   const app = await fixture({ auth: true });
   try {

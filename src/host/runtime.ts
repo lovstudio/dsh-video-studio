@@ -207,13 +207,22 @@ export class StudioRuntime {
       return;
     }
     const projectMatch = /^\/api\/projects\/([^/]+)$/.exec(route);
+    if (projectMatch && method === "GET") {
+      json(res, 200, await this.store.project(assertId(projectMatch[1]!)));
+      return;
+    }
     if (projectMatch && method === "PUT") {
+      if (req.headers["x-studio-revision"] === undefined)
+        throw new HttpError(428, "工作台已更新，请刷新页面后再保存工程。");
       json(
         res,
         200,
         await this.store.saveProject(
           assertId(projectMatch[1]!),
           await readJson(req),
+          req.headers["x-studio-revision"] === "new"
+            ? null
+            : z.string().datetime().parse(req.headers["x-studio-revision"]),
         ),
       );
       return;

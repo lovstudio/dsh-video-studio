@@ -40,6 +40,10 @@ export interface Project {
     assets: Asset[];
     clips: Clip[];
     updatedAt: string;
+    dsh?: {
+        workspacePath: string;
+        sessionId: string;
+    };
 }
 export interface CaptionSegment {
     start: number;

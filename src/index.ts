@@ -4,11 +4,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { StudioRuntime, type StudioConfig } from "./host/runtime";
+import { registerVideoStudioTools } from "./host/dsh-tools";
 
 export type { AsrProvider, AsrRequest } from "./host/asr";
 export type { StudioConfig } from "./host/runtime";
 export const name = "video-studio";
-export const inject = ["webServer", "connection"];
+export const inject = ["webServer", "connection", "tools"];
 export const Config = z.object({
   dataDir: z.string(),
   browserExecutable: z.string(),
@@ -58,6 +59,10 @@ export async function apply(
     authorize: (req) => connection.requestRejection(req),
   });
   await runtime.init();
+  ctx.effect(
+    () => registerVideoStudioTools(ctx, runtime),
+    "video-studio: model tools",
+  );
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide("videoStudio", runtime);
     const unprovideAsr = ctx.reflect.provide("videoStudioAsr", runtime.asr);

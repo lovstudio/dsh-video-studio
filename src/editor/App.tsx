@@ -40,6 +40,7 @@ import {
   Redo2,
   RotateCcw,
   MoveUpRight,
+  MessageSquare,
   Type,
   Undo2,
   Upload,
@@ -72,6 +73,7 @@ import { useEditor } from "./useEditor";
 import { Inspector } from "./Inspector";
 import { Timeline } from "./Timeline";
 import { IconButton } from "./ui";
+import { useDsh } from "./dsh";
 
 type Panel = "assets" | "titles" | "captions" | "motion";
 const terminal = (status?: string) =>
@@ -135,8 +137,23 @@ function Modal({
   );
 }
 export function App() {
-  const { project, edit, undo, redo, history, save, retry, load, current } =
-    useEditor();
+  const {
+    project,
+    edit,
+    undo,
+    redo,
+    history,
+    save,
+    retry,
+    load,
+    current,
+    saveNow,
+    acceptServer,
+    reload,
+    fresh,
+  } = useEditor();
+  const dsh = useDsh();
+  const [handoffBusy, setHandoffBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(
       project.clips[0]?.id || null,
     ),
@@ -180,6 +197,24 @@ export function App() {
     queryFn: ({ signal }) => request<Project[]>("projects", { signal }),
     enabled: projectsOpen,
   });
+  const remoteProject = useQuery({
+    queryKey: ["studio-project", project.id],
+    queryFn: ({ signal }) =>
+      request<Project>(`projects/${encodeURIComponent(project.id)}`, {
+        signal,
+      }),
+    enabled: dsh.embedded && save.status === "saved",
+    refetchInterval: 1500,
+  });
+  useEffect(() => {
+    if (remoteProject.data) acceptServer(remoteProject.data);
+  }, [remoteProject.data, acceptServer]);
+  useEffect(() => {
+    if (!dsh.context || !fresh.current || current.current.dsh) return;
+    fresh.current = false;
+    const { workspacePath, sessionId } = dsh.context;
+    edit((value) => ({ ...value, dsh: { workspacePath, sessionId } }));
+  }, [dsh.context, edit, fresh, current]);
   const renderJob = useQuery({
     queryKey: ["studio-job", renderId],
     queryFn: ({ signal }) => request<StudioJob>(`jobs/${renderId}`, { signal }),
@@ -547,6 +582,31 @@ export function App() {
     setProjectsOpen(false);
     setMenuOpen(false);
   };
+  const handoff = async () => {
+    if (!dsh.context) return;
+    setHandoffBusy(true);
+    try {
+      const { workspacePath, sessionId } = dsh.context;
+      if (
+        current.current.dsh &&
+        current.current.dsh.workspacePath !== workspacePath
+      )
+        throw new Error(
+          "此工程属于另一个 DSH 工作区，请在对应工作区会话中打开。",
+        );
+      if (!current.current.dsh)
+        edit((value) => ({ ...value, dsh: { workspacePath, sessionId } }));
+      const saved = await saveNow();
+      dsh.draft(
+        `请协助剪辑视频工程 ${JSON.stringify(saved.name)}。\n工程 ID：${saved.id}\n请先用 video_studio_read 读取工程，再用 video_studio_update 修改；保留素材引用。工程已与当前工作区关联，保存后时间线会自动同步。\n播放头：第 ${frame} 帧（${saved.fps} fps）${selectedId ? `；选中片段 ID：${selectedId}` : ""}。\n\n我的剪辑要求：`,
+        saved.id,
+      );
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setHandoffBusy(false);
+    }
+  };
   const captions = project.clips
       .filter((c) => c.kind === "caption")
       .sort((a, b) => a.start - b.start),
@@ -556,9 +616,11 @@ export function App() {
       ? "已保存到本机"
       : save.status === "saving"
         ? "正在保存"
-        : save.status === "error"
-          ? "保存失败"
-          : "等待保存";
+        : save.status === "conflict"
+          ? "有新版本"
+          : save.status === "error"
+            ? "保存失败"
+            : "等待保存";
   const renderBusy =
     render.isPending || (!!renderId && !terminal(renderJob.data?.status));
   return (
@@ -591,7 +653,7 @@ export function App() {
           <div className={`save-state ${save.status}`} title={save.message}>
             {save.status === "saved" ? (
               <CheckCircle2 />
-            ) : save.status === "error" ? (
+            ) : save.status === "error" || save.status === "conflict" ? (
               <CircleAlert />
             ) : (
               <span className="status-dot" />
@@ -642,7 +704,21 @@ export function App() {
               </IconButton>
               {menuOpen && (
                 <div className="dropdown-menu">
-                  <button onClick={() => loadProject(createProject(false))}>
+                  <button
+                    onClick={() =>
+                      loadProject({
+                        ...createProject(false),
+                        ...(dsh.context
+                          ? {
+                              dsh: {
+                                workspacePath: dsh.context.workspacePath,
+                                sessionId: dsh.context.sessionId,
+                              },
+                            }
+                          : {}),
+                      })
+                    }
+                  >
                     <FilePlus2 />
                     新建空白工程
                   </button>
@@ -680,6 +756,22 @@ export function App() {
               )}
             </div>
           </div>
+          {dsh.embedded && (
+            <button
+              className="dsh-agent-button"
+              onClick={() => void handoff()}
+              disabled={
+                !dsh.context ||
+                handoffBusy ||
+                dsh.draftState === "pending" ||
+                save.status === "conflict"
+              }
+              title="把工程和选中片段加入当前 DSH 草稿，由你确认发送"
+            >
+              <MessageSquare />
+              <span>{handoffBusy ? "保存中" : "交给 DSH"}</span>
+            </button>
+          )}
           <button
             className="primary-button export-button"
             disabled={
@@ -703,6 +795,32 @@ export function App() {
           </button>
         </div>
       </header>
+      {dsh.embedded && (dsh.message || !project.dsh) && (
+        <div className="dsh-context-note" role="status">
+          {dsh.message ||
+            (dsh.context
+              ? `当前会话：${dsh.context.sessionTitle || dsh.context.workspaceName || "DSH"} · 点击“交给 DSH”关联工程并准备剪辑要求。`
+              : "正在连接当前 DSH 工作区…")}
+        </div>
+      )}
+      {save.status === "conflict" && (
+        <div className="dsh-conflict-banner" role="alert">
+          <span>{save.message}</span>
+          <button
+            onClick={() =>
+              download(
+                JSON.stringify(project, null, 2),
+                `${project.name}-本地备份.json`,
+              )
+            }
+          >
+            备份我的修改
+          </button>
+          <button onClick={() => void reload().catch(reportError)}>
+            载入最新版本
+          </button>
+        </div>
+      )}
       {(error || capabilities.isError || save.status === "error") && (
         <div className="error-banner" role="alert">
           <CircleAlert />

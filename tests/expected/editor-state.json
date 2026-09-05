@@ -3,15 +3,30 @@
     "width": 1440,
     "height": 900
   },
-  "project": "灵感成片 · 开场练习",
-  "clips": 3,
+  "mode": "DSH native conversation view",
+  "activeView": "视频",
+  "project": "DSH 原生剪辑工程",
   "frame": 45,
   "fps": 30,
-  "durationInFrames": 480,
+  "clips": 3,
   "canvas": {
     "width": 1920,
     "height": 1080
   },
+  "durationInFrames": 480,
   "activePanel": "titles",
+  "workspace": "native-workspace",
+  "sessionFixture": "UI integration fixture; no model invoked",
+  "checks": {
+    "sidebarVisible": true,
+    "composerVisible": true,
+    "workspaceBound": true,
+    "draftPreserved": true,
+    "externalUpdateReflected": true,
+    "concurrentWriteConflictPreservesLocal": true,
+    "conflictReload": true,
+    "blankSessionEntry": true,
+    "horizontalOverflow": false
+  },
   "errors": []
 }

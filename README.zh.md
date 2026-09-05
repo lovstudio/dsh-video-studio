@@ -1,6 +1,6 @@
 # DSH Video Studio
 
-面向 DeepSeek Harness 的本地视频剪辑工作台。Remotion 负责实时预览与 MP4 导出；GSAP 动效由视频帧定位驱动，预览、跳转与渲染共用同一套场景。
+集成在 DeepSeek Harness 会话中的视频剪辑视图。工作区、会话和输入框与时间线协同使用。Remotion 负责预览与 MP4 导出，GSAP 动效由同一视频帧驱动。
 
 [English](README.md)
 
@@ -13,9 +13,9 @@ npx @deepseek-ai/dsh plugin --profile web add -w github:lovstudio/dsh-video-stud
 npx @deepseek-ai/dsh web
 ```
 
-若 DSH 已在运行，安装后重启，然后点击侧边栏的 **视频工作台**。GitHub 仓库已包含宿主、编辑器和 Remotion 场景的构建产物，用户无需手动构建。编辑器与 DSH 同源并复用签名 cookie 鉴权；独立 iframe 隔离编辑器的 React/Remotion 与宿主 UI。
+若 DSH 已在运行，安装后重启。选择工作区，在已有会话顶部打开 **视频** 标签。新会话可在输入框上方点击 **直接开始剪辑**，无需配置模型或先发送消息。侧边栏入口提供工作区引导。GitHub 仓库包含全部运行产物，无需手动构建。
 
-如需固定版本，使用 `github:lovstudio/dsh-video-studio#v0.1.0`。
+如需固定版本，使用 `github:lovstudio/dsh-video-studio#v0.2.0`。
 
 ![DSH 视频剪辑工作台](tests/expected/editor.png)
 
@@ -24,6 +24,10 @@ npx @deepseek-ai/dsh web
 素材库、实时画布、属性面板和四类轨道集中在一个界面：画面、音频、标题、字幕。支持导入媒体、排列和修剪片段、播放头分割、文字编辑、音量与构图调整、撤销重做，以及横版、竖版、方形画布。首次打开提供可编辑的动态标题示例，不依赖外部素材。
 
 工程 JSON 与素材保存在宿主本机，服务端使用原子写入。JSON 备份包含素材引用，不内嵌素材文件。导出任务固定提交时的工程快照，显示进度，支持取消并下载 MP4。SRT 字幕导入导出无需配置 ASR。
+
+点击 **交给 DSH** 会先保存工程，再将工程 ID、选中片段和播放位置加入当前会话草稿；保留原有输入，由你确认发送。DSH Agent 可通过已注册的工具读取、修改同一工程，保存结果自动同步到时间线。双方同时修改时显示版本冲突，可备份本地修改并载入最新版本。
+
+在 DSH 内新建的工程归属当前工作区。既有未关联工程由用户点击“交给 DSH”时关联。模型工具按执行会话的实际工作区路径限制访问，不能认领未关联工程或读取其他工作区的工程。iframe 仅隔离 Remotion/React 运行时，导航、会话状态、输入、工具和鉴权均由 DSH 管理。
 
 ## 本地开发
 
@@ -38,7 +42,7 @@ pnpm test:render # 真实 Chrome 渲染与帧确定性验证
 pnpm dev
 ```
 
-本地开发地址为 `http://127.0.0.1:4318/video-studio/`。开发服务器提供构建产物，修改源码后需重新构建；仅监听 loopback，并拒绝外部 Origin。
+`http://127.0.0.1:4318/video-studio/` 是独立编辑器调试页，不包含 DSH 会话和 Agent 集成；插件验收请从 `dsh web` 进入。修改源码后需重新构建。开发服务器仅监听 loopback，并拒绝外部 Origin。
 
 构建后，将本地工作目录安装到 DSH web profile 进行开发验证：
 
@@ -56,6 +60,7 @@ npx @deepseek-ai/dsh plugin --profile web add -w /absolute/path/to/dsh-video-stu
 | -------------------------- | ---------------------------------- |
 | `GET api/capabilities`     | 查询真实的 ASR 与渲染可用状态      |
 | `GET api/projects`         | 读取已保存工程                     |
+| `GET api/projects/:id`     | 读取最新工程与版本                 |
 | `PUT api/projects/:id`     | 校验并原子保存工程                 |
 | `POST api/assets`          | 流式上传素材                       |
 | `GET media/:id`            | 受鉴权保护的素材读取与字节范围请求 |
@@ -80,19 +85,21 @@ export DSH_VIDEO_ASR_FORMAT='diarized_json' # 或 verbose_json
 
 持久化仓库、HTTP 控制器、provider registry 与后台任务队列分别实现。`src/core` 管理剪辑不变量与 SRT 转换；`src/remotion` 管理共享画面；`src/editor` 管理用户交互；`src/shell` 仅负责 DSH 挂载。新增动效应进入共享帧驱动场景，新增 ASR 服务应实现已有契约。
 
+DSH 工具包括 `video_studio_list`、`video_studio_read`、`video_studio_update`、`video_studio_render`、`video_studio_job`。修改前必须由同一会话读取对应版本。GUI 通过 `x-studio-revision` 传递已保存的 `updatedAt`，新建时传 `new`，过期写入返回 409。工具导出复用工作台队列和下载路由，仅提交会话可查询或取消自己的任务。
+
 ## Model Experience
 
 ### What the model sees
 
-本包提供用户工作台，不自动注册模型工具、不修改提示词，也不把媒体注入会话。获得用户授权的本地 Agent 可通过常规文件访问读写工程 JSON。
+模型会获得五个视频工具定义，调用时读取工程内容。“交给 DSH”准备包含工程与片段引用的草稿，由用户确认发送；不向会话注入媒体二进制或 ASR 密钥。
 
 ### Token effect
 
-不向模型上下文增加工具 schema 或后台转录内容。
+增加五个稳定工具 schema。读取工程的上下文用量随片段与元数据规模变化；播放过程不向模型持续发送画面或转录内容。
 
 ### KV Cache effect
 
-打开工作台不会修改提示词或主动使 KV Cache 失效。
+编辑和播放过程中工具定义保持稳定，工程状态通过用户消息或工具结果进入上下文，不持续修改系统提示词。
 
 ## Known Limitations and Deferred Work
 

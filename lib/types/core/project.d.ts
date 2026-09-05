@@ -110,6 +110,10 @@ export declare const projectSchema: z.ZodObject<{
         }>;
     }, z.core.$strip>>;
     updatedAt: z.ZodString;
+    dsh: z.ZodOptional<z.ZodObject<{
+        workspacePath: z.ZodString;
+        sessionId: z.ZodString;
+    }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const uid: () => `${string}-${string}-${string}-${string}-${string}`;
 export declare const tracks: {
