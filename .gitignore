@@ -1,0 +1,5 @@
+node_modules/
+.studio-data/
+.verification/
+*.log
+output/*.tgz

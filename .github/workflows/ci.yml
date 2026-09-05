@@ -1,0 +1,34 @@
+name: Validate plugin
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.21.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck && pnpm format:check && pnpm test
+      - name: Verify committed runtime artifacts
+        run: node scripts/verify-dist.mjs
+      - run: pnpm build
+      - name: Ensure source and committed build agree
+        run: |
+          git diff --exit-code -- lib
+          test -z "$(git status --porcelain --untracked-files=all -- lib)"
+      - run: pnpm test:render
+      - run: npm pack --dry-run

@@ -1,0 +1,17 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "project": "灵感成片 · 开场练习",
+  "clips": 3,
+  "frame": 45,
+  "fps": 30,
+  "durationInFrames": 480,
+  "canvas": {
+    "width": 1920,
+    "height": 1080
+  },
+  "activePanel": "titles",
+  "errors": []
+}

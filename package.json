@@ -1,0 +1,98 @@
+{
+  "name": "@lovstudio/dsh-video-studio",
+  "version": "0.1.0",
+  "description": "A local-first video editing workbench for DeepSeek Harness with Remotion, GSAP and pluggable ASR",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.cjs",
+    "./invariant": "./lib/invariant.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsx src/host/dev.ts",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:render": "tsx --test tests/render.integration.ts",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "prepack": "pnpm build",
+    "format:check": "prettier --check src scripts tests *.json *.md",
+    "verify:dist": "node scripts/verify-dist.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@remotion/player": "4.0.521",
+    "@remotion/renderer": "4.0.521",
+    "@tanstack/react-query": "^5.90.0",
+    "gsap": "3.15.0",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "remotion": "4.0.521",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@remotion/bundler": "4.0.521",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "esbuild": "^0.27.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lovstudio/dsh-video-studio.git"
+  },
+  "homepage": "https://github.com/lovstudio/dsh-video-studio#readme",
+  "bugs": {
+    "url": "https://github.com/lovstudio/dsh-video-studio/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "video-editor",
+    "remotion",
+    "gsap",
+    "asr"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
