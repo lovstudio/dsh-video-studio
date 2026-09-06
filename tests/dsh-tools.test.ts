@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -27,6 +27,8 @@ async function fixture(context: TestContext) {
     studioDir: join(root, "studio"),
     remotionDir: join(root, "remotion"),
     authorize: () => undefined,
+    resolveWorkspace: async (sessionId) =>
+      sessionId === "unknown-session" ? undefined : workspace,
   });
   await runtime.init();
   runtime.exporter.available = async () => true;
@@ -73,7 +75,7 @@ async function fixture(context: TestContext) {
   const save = (project: Project) =>
     runtime.store.saveProject(project.id, project, null);
   const project = (cwd = workspace, sessionId = "origin-session"): Project => ({
-    ...createProject(),
+    ...createProject(true),
     dsh: { workspacePath: cwd, sessionId },
   });
   return {
@@ -124,6 +126,34 @@ test("tools use trusted session workspace, canonicalize aliases, and omit unboun
       signal: new AbortController().signal,
     } as ToolRunContext),
     /已关联工作区的 DSH 会话/,
+  );
+});
+
+test("tools and HTTP resolve the registered workspace when a session cwd is nested", async (context) => {
+  const f = await fixture(context);
+  const nested = join(f.workspace, "source");
+  await mkdir(nested);
+  const project = await f.save(f.project());
+  const read = await f.call<Project>(
+    "video_studio_read",
+    { projectId: project.id },
+    f.exec("nested-session", nested),
+  );
+  assert.equal(read.id, project.id);
+  assert.equal(
+    await f.runtime.resolveWorkspace(
+      "nested-session",
+      new AbortController().signal,
+    ),
+    await realpath(f.workspace),
+  );
+  await assert.rejects(
+    f.call(
+      "video_studio_read",
+      { projectId: project.id },
+      f.exec("unknown-session", f.workspace),
+    ),
+    /会话不存在/,
   );
 });
 

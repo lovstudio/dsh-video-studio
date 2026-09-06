@@ -13,9 +13,9 @@ npx @deepseek-ai/dsh plugin --profile web add -w github:lovstudio/dsh-video-stud
 npx @deepseek-ai/dsh web
 ```
 
-若 DSH 已在运行，安装后重启。选择工作区，在已有会话顶部打开 **视频** 标签。新会话可在输入框上方点击 **直接开始剪辑**，无需配置模型或先发送消息。侧边栏入口提供工作区引导。GitHub 仓库包含全部运行产物，无需手动构建。
+若 DSH 已在运行，安装后重启。选择工作区，在已有会话顶部打开 **视频** 标签。新会话可在输入框上方点击 **直接开始剪辑**，无需配置模型或先发送消息。GitHub 仓库包含全部运行产物，无需手动构建。
 
-如需固定版本，使用 `github:lovstudio/dsh-video-studio#v0.2.1`。
+如需固定版本，使用 `github:lovstudio/dsh-video-studio#v0.2.2`。
 
 ![DSH 视频剪辑工作台](tests/expected/editor.png)
 
@@ -29,7 +29,11 @@ npx @deepseek-ai/dsh web
 
 点击 **交给 DSH** 会先保存工程，再将工程 ID、选中片段和播放位置加入当前会话草稿；保留原有输入，由你确认发送。DSH Agent 可通过已注册的工具读取、修改同一工程，保存结果自动同步到时间线。双方同时修改时显示版本冲突，可备份本地修改并载入最新版本。
 
-在 DSH 内新建的工程归属当前工作区。既有未关联工程由用户点击“交给 DSH”时关联。模型工具按执行会话的实际工作区路径限制访问，不能认领未关联工程或读取其他工作区的工程。iframe 仅隔离 Remotion/React 运行时，导航、会话状态、输入、工具和鉴权均由 DSH 管理。
+旧版本自动生成且完全未修改的示例保留供手动打开，不再代替当前会话的实际工程。已修改的草稿保留。自动恢复严格匹配当前会话和工作区；用户主动打开的同工作区工程可以继续恢复。
+
+点击 **浏览工作区素材**，可浏览当前会话真实工作区中的文件夹、视频、音频和图片。选定文件后复制到当前工程素材库，再加入时间线，原文件保持不变。宿主根据 DSH 会话元数据确定工作区，校验路径边界，媒体读取支持 Range。目录浏览限制读取量，跳过隐藏目录、依赖和构建缓存。Remotion 工程通过包清单识别；不会自动执行源码或把任意 composition 转换为剪辑片段。
+
+在 DSH 内新建的工程归属当前工作区。既有未关联工程由用户点击“交给 DSH”时关联。模型工具按执行会话的实际工作区路径限制访问，不能认领未关联工程或读取其他工作区的工程。iframe 仅隔离 Remotion/React 运行时，导航、会话状态、输入、工具和鉴权均由 DSH 管理。默认数据目录为 `$DSH_HOME/video-studio`，未设置时为 `~/.dsh/video-studio`；仍可使用 `dataDir` 或 `DSH_VIDEO_DATA_DIR` 覆盖。
 
 ## 本地开发
 
@@ -58,21 +62,25 @@ npx @deepseek-ai/dsh plugin --profile web add -w /absolute/path/to/dsh-video-stu
 
 所有 HTTP 路由位于 `/video-studio/`。DSH host 在返回静态文件或调用 API 前均执行 connection 的 `requestRejection()`。浏览器不保存 ASR 密钥，媒体读取支持 Range 与 HEAD。
 
-| 路由                       | 功能                               |
-| -------------------------- | ---------------------------------- |
-| `GET api/capabilities`     | 查询真实的 ASR 与渲染可用状态      |
-| `GET api/projects`         | 读取已保存工程                     |
-| `GET api/projects/:id`     | 读取最新工程与版本                 |
-| `PUT api/projects/:id`     | 校验并原子保存工程                 |
-| `POST api/assets`          | 流式上传素材                       |
-| `GET media/:id`            | 受鉴权保护的素材读取与字节范围请求 |
-| `POST api/render`          | 提交固定工程快照，生成 MP4         |
-| `POST api/asr`             | 提交指定已上传素材的转录任务       |
-| `GET api/jobs/:id`         | 读取任务状态与进度                 |
-| `POST api/jobs/:id/cancel` | 取消排队或运行中的任务             |
-| `GET exports/:id.mp4`      | 下载已完成的成片                   |
+| 路由                                         | 功能                                                         |
+| -------------------------------------------- | ------------------------------------------------------------ |
+| `GET api/capabilities`                       | 查询真实的 ASR 与渲染可用状态                                |
+| `GET api/projects`                           | 读取已保存工程                                               |
+| `GET api/projects?sessionId=…&scope=session` | 读取当前会话工程；`scope=workspace` 用于显式浏览同工作区工程 |
+| `GET api/workspace?sessionId=…&path=…`       | 浏览可信工作区中的相对目录                                   |
+| `GET workspace/media?sessionId=…&path=…`     | 预览工作区媒体，支持 Range 与 HEAD                           |
+| `POST api/workspace/import`                  | 将选定工作区媒体导入素材仓库                                 |
+| `GET api/projects/:id`                       | 读取最新工程与版本                                           |
+| `PUT api/projects/:id`                       | 校验并原子保存工程                                           |
+| `POST api/assets`                            | 流式上传素材                                                 |
+| `GET media/:id`                              | 受鉴权保护的素材读取与字节范围请求                           |
+| `POST api/render`                            | 提交固定工程快照，生成 MP4                                   |
+| `POST api/asr`                               | 提交指定已上传素材的转录任务                                 |
+| `GET api/jobs/:id`                           | 读取任务状态与进度                                           |
+| `POST api/jobs/:id/cancel`                   | 取消排队或运行中的任务                                       |
+| `GET exports/:id.mp4`                        | 下载已完成的成片                                             |
 
-素材上传 body 为原始二进制，query 包含 `name`、`kind`、`duration` 和可选 `width`、`height`。工程使用带版本号的帧时间数据；渲染仅接受本机素材仓库中的引用。每个渲染任务使用临时 loopback 媒体服务器，仅暴露该快照允许访问的素材，不向 Chromium 传递用户的 DSH 登录 cookie。
+素材上传 body 为原始二进制，query 包含 `name`、`kind`、`duration` 和可选 `width`、`height`。工作区导入接受包含 `sessionId`、相对 `path`、`duration` 及可选 `width`、`height` 的 JSON。工程使用带版本号的帧时间数据；渲染仅接受本机素材仓库中的引用。每个渲染任务使用临时 loopback 媒体服务器，仅暴露该快照允许访问的素材，不向 Chromium 传递用户的 DSH 登录 cookie。
 
 ASR 必须在服务端显式配置，并选择能返回时间戳的服务与模型：
 

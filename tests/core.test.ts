@@ -6,6 +6,8 @@ import {
   createProject,
   durationInFrames,
   formatTime,
+  isLegacyAutoDemo,
+  isPristineExample,
   projectSchema,
   splitClip,
   updateClip,
@@ -147,10 +149,78 @@ test("asset import appends to its own track and reuses existing asset metadata",
   assert.doesNotThrow(() => projectSchema.parse(repeated));
 });
 
-test("default and empty projects are valid; empty duration is one frame", () => {
+test("projects default to empty; a user-requested example records its origin", () => {
   assert.doesNotThrow(() => projectSchema.parse(createProject()));
   assert.doesNotThrow(() => projectSchema.parse(createProject(false)));
+  assert.deepEqual(createProject().clips, []);
+  assert.equal(createProject().example, undefined);
   assert.equal(durationInFrames(createProject(false)), 1);
+  const example = projectSchema.parse(createProject(true));
+  assert.deepEqual(example.example, { template: "opening-v1", source: "user" });
+  assert.equal(example.clips.length, 3);
+  assert.equal(isPristineExample(example), true);
+  assert.equal(isLegacyAutoDemo(example), false);
+});
+
+test("legacy example detection ignores only identity, save metadata, and DSH scope", () => {
+  const { example: _example, ...legacy } = createProject(true);
+  assert.equal(isLegacyAutoDemo(legacy), true);
+  const other = {
+    ...legacy,
+    id: "other-project",
+    clips: legacy.clips.map((clip, i) => ({ ...clip, id: `other-clip-${i}` })),
+    updatedAt: "2000-01-01T00:00:00.000Z",
+    dsh: { workspacePath: "/another-workspace", sessionId: "another-session" },
+  };
+  assert.equal(isLegacyAutoDemo(other), true);
+  assert.equal(isPristineExample(other), true);
+});
+
+test("every editable example field protects a user's changed project from legacy migration", () => {
+  const { example: _example, ...legacy } = createProject(true);
+  const projectChanges: Partial<Project>[] = [
+    { name: `${legacy.name} · 我的版本` },
+    { fps: 24 },
+    { width: 1080 },
+    { height: 1920 },
+    { assets: [video()] },
+    { clips: legacy.clips.slice(1) },
+    { clips: [...legacy.clips].reverse() },
+  ];
+  for (const patch of projectChanges)
+    assert.equal(
+      isPristineExample({ ...legacy, ...patch }),
+      false,
+      JSON.stringify(patch),
+    );
+  const clipChanges: Partial<Clip>[] = [
+    { assetId: "linked-asset" },
+    { trackId: "captions" },
+    { kind: "caption" },
+    { name: "重新命名的片段" },
+    { start: 1 },
+    { duration: 179 },
+    { sourceStart: 1 },
+    { text: "我修改过的文字" },
+    { motion: "none" },
+    { volume: 0 },
+    { opacity: 0.8 },
+    { scale: 1.2 },
+    { x: 1 },
+    { y: 1 },
+    { fontSize: 91 },
+    { tone: "ink" },
+  ];
+  for (const patch of clipChanges) {
+    const changed = {
+      ...legacy,
+      clips: legacy.clips.map((clip, index) =>
+        index === 0 ? { ...clip, ...patch } : clip,
+      ),
+    };
+    assert.equal(isLegacyAutoDemo(changed), false, JSON.stringify(patch));
+    assert.equal(isPristineExample(changed), false, JSON.stringify(patch));
+  }
 });
 
 test("project boundary rejects duplicate IDs across both entity collections", () => {

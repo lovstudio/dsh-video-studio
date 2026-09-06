@@ -73,10 +73,6 @@ export interface Locale {
 export interface Sessions {
   list: { getSnapshot(): SessionList };
   scope(id: string): Context | undefined;
-  open(id: string): void;
-}
-export interface WorkspaceNavigation {
-  connectWorkspace(id: string): Promise<string>;
 }
 export interface Conversation {
   input: { for(scope: Context): { state: { getSnapshot(): InputSnapshot } } };

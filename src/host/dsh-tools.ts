@@ -126,12 +126,15 @@ interface Scope {
 }
 
 /** Session identity comes from dispatch, never from model arguments. */
-async function executionScope(exec: ToolRunContext): Promise<Scope> {
+async function executionScope(
+  exec: ToolRunContext,
+  runtime: Pick<StudioRuntime, "resolveWorkspace">,
+): Promise<Scope> {
   exec.signal.throwIfAborted();
   const session = exec.agent?.session;
   if (!session?.header.cwd)
     throw new Error("视频工具需要一个已关联工作区的 DSH 会话");
-  const workspacePath = await realpath(session.header.cwd);
+  const workspacePath = await runtime.resolveWorkspace(session.id, exec.signal);
   exec.signal.throwIfAborted();
   return { sessionId: session.id, workspacePath };
 }
@@ -181,7 +184,10 @@ function jobValue(projectId: string, job: StudioJob) {
 /** Register tools over the same persisted projects and render queue as the editor. */
 export function registerVideoStudioTools(
   ctx: Context,
-  runtime: Pick<StudioRuntime, "store" | "jobs" | "exporter">,
+  runtime: Pick<
+    StudioRuntime,
+    "store" | "jobs" | "exporter" | "resolveWorkspace"
+  >,
 ): () => Promise<void> {
   const observations = new Map<string, Map<string, string>>();
   const ownedJobs = new Map<string, { sessionId: string; projectId: string }>();
@@ -225,7 +231,7 @@ export function registerVideoStudioTools(
       },
       isConcurrencySafe: () => true,
       async execute(_args, exec) {
-        const scope = await executionScope(exec);
+        const scope = await executionScope(exec, runtime);
         const projects = await runtime.store.projects();
         const visible = await Promise.all(
           projects.map(async (project) =>
@@ -246,7 +252,7 @@ export function registerVideoStudioTools(
       output: projectOutput,
       isConcurrencySafe: () => true,
       async execute(args, exec) {
-        const scope = await executionScope(exec);
+        const scope = await executionScope(exec, runtime);
         const project = await readProject(args.projectId, scope);
         exec.signal.throwIfAborted();
         observe(scope, project);
@@ -275,7 +281,7 @@ export function registerVideoStudioTools(
       },
       output: projectOutput,
       async execute(args, exec) {
-        const scope = await executionScope(exec);
+        const scope = await executionScope(exec, runtime);
         if (
           observations.get(scope.sessionId)?.get(args.projectId) !==
           args.expectedUpdatedAt
@@ -313,7 +319,7 @@ export function registerVideoStudioTools(
         }),
       },
       async execute(args, exec) {
-        const scope = await executionScope(exec);
+        const scope = await executionScope(exec, runtime);
         const project = await readProject(args.projectId, scope);
         const snapshot = await runtime.store.canonicalProject(project);
         if (snapshot.clips.length === 0)
@@ -352,7 +358,7 @@ export function registerVideoStudioTools(
         }),
       },
       async execute(args, exec) {
-        const scope = await executionScope(exec);
+        const scope = await executionScope(exec, runtime);
         const owner = ownedJobs.get(args.jobId);
         if (!owner || owner.sessionId !== scope.sessionId)
           throw new HttpError(403, "只能查看或取消当前会话提交的视频任务");

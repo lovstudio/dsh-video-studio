@@ -5,6 +5,7 @@ import { AsrRegistry } from "./asr";
 import { JobQueue } from "./jobs";
 import { RemotionExporter } from "./render";
 import { StudioStore } from "./storage";
+import { WorkspaceFiles, type WorkspaceResolver } from "./workspace";
 export interface StudioConfig {
     dataDir?: string;
     browserExecutable?: string;
@@ -25,6 +26,7 @@ export interface StudioRuntimeOptions {
     studioDir: string;
     remotionDir: string;
     authorize(req: IncomingMessage): number | undefined;
+    resolveWorkspace?: WorkspaceResolver;
 }
 declare const configSchema: z.ZodObject<{
     dataDir: z.ZodString;
@@ -54,13 +56,16 @@ export declare class StudioRuntime {
     readonly asr: AsrRegistry;
     readonly exporter: RemotionExporter;
     readonly config: ReturnType<typeof resolveStudioConfig>;
+    readonly workspace: WorkspaceFiles;
     private readonly shutdown;
     private readonly requests;
     constructor(options: StudioRuntimeOptions);
     init(): Promise<void>;
+    resolveWorkspace(sessionId: string, signal: AbortSignal): Promise<string>;
     capabilities(): Promise<StudioCapabilities>;
     handle: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
     private dispatch;
     dispose(): Promise<void>;
+    private workspaceRequest;
 }
 export {};

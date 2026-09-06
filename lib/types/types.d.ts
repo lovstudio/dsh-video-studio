@@ -40,6 +40,10 @@ export interface Project {
     assets: Asset[];
     clips: Clip[];
     updatedAt: string;
+    example?: {
+        template: "opening-v1";
+        source: "user";
+    };
     dsh?: {
         workspacePath: string;
         sessionId: string;

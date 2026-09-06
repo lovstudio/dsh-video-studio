@@ -60,50 +60,13 @@ export async function uploadMedia(
         : undefined;
   if (!kind) throw new Error(`暂不支持 ${file.name} 的文件格式`);
   const url = URL.createObjectURL(file);
-  let duration = 5,
-    width: number | undefined,
-    height: number | undefined;
+  let metadata: Awaited<ReturnType<typeof readMediaMetadata>>;
   try {
-    if (kind === "image") {
-      const img = new Image();
-      img.src = url;
-      await img.decode();
-      width = img.naturalWidth;
-      height = img.naturalHeight;
-    } else {
-      const media = document.createElement(
-        kind === "video" ? "video" : "audio",
-      );
-      media.preload = "metadata";
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          media.removeAttribute("src");
-          media.load();
-          reject(new Error("读取媒体信息超时"));
-        }, 20_000);
-        media.onloadedmetadata = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-        media.onerror = () => {
-          clearTimeout(timer);
-          reject(new Error(`浏览器无法读取 ${file.name}`));
-        };
-        media.src = url;
-      });
-      duration = media.duration;
-      if (media instanceof HTMLVideoElement) {
-        width = media.videoWidth;
-        height = media.videoHeight;
-      }
-      media.removeAttribute("src");
-      media.load();
-      if (!Number.isFinite(duration) || duration <= 0 || duration > 3600)
-        throw new Error("请选择时长不超过 60 分钟的有效媒体文件");
-    }
+    metadata = await readMediaMetadata(url, kind, file.name);
   } finally {
     URL.revokeObjectURL(url);
   }
+  const { duration, width, height } = metadata;
   const params = new URLSearchParams({
     name: file.name,
     kind,
@@ -142,4 +105,61 @@ export async function uploadMedia(
     }
   }
   return asset;
+}
+
+/** Probe local or workspace media without reading the entire file into memory. */
+export async function readMediaMetadata(
+  url: string,
+  kind: AssetKind,
+  name: string,
+): Promise<{ duration: number; width?: number; height?: number }> {
+  let duration = 5,
+    width: number | undefined,
+    height: number | undefined;
+  if (kind === "image") {
+    const img = new Image();
+    img.src = url;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        img.decode(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("读取图片信息超时")),
+            20_000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    width = img.naturalWidth;
+    height = img.naturalHeight;
+  } else {
+    const media = document.createElement(kind === "video" ? "video" : "audio");
+    media.preload = "metadata";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("读取媒体信息超时")), 20_000);
+        media.onloadedmetadata = () => resolve();
+        media.onerror = () => reject(new Error(`浏览器无法读取 ${name}`));
+        media.src = url;
+      });
+      duration = media.duration;
+      if (media instanceof HTMLVideoElement) {
+        width = media.videoWidth;
+        height = media.videoHeight;
+      }
+    } finally {
+      clearTimeout(timer);
+      media.onloadedmetadata = null;
+      media.onerror = null;
+      media.removeAttribute("src");
+      media.load();
+    }
+    if (!Number.isFinite(duration) || duration <= 0 || duration > 3600)
+      throw new Error("请选择时长不超过 60 分钟的有效媒体文件");
+  }
+  return { duration, width, height };
 }

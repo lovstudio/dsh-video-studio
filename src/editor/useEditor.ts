@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createProject, projectSchema } from "../core/project";
+import {
+  createProject,
+  isLegacyAutoDemo,
+  projectSchema,
+} from "../core/project";
 import type { Project } from "../types";
 import { request } from "./api";
 import {
@@ -24,8 +28,16 @@ function initialRecovery(start: EditorStart) {
   } catch {
     /* Browser storage may be unavailable. Server saves still work. */
   }
+  const selection = selectProjectRecovery(start, stored, createProject(false));
   return {
-    ...selectProjectRecovery(start, stored, createProject(false)),
+    ...selection,
+    // Foreign v1 drafts remain in their original storage, outside this session's save queue.
+    records: selection.records.filter(
+      (record) =>
+        !start.scope ||
+        !record.project.dsh ||
+        record.project.dsh.workspacePath === start.scope.workspacePath,
+    ),
     key: projectRecoveryKey(start.scope),
   };
 }
@@ -45,9 +57,13 @@ function persistRecord(key: string, record: ProjectRecovery): void {
   }
 }
 
-function persistSelection(key: string, id: string): void {
+function persistSelection(
+  key: string,
+  id: string,
+  mode: "automatic" | "explicit",
+): void {
   try {
-    localStorage.setItem(key, JSON.stringify({ activeProjectId: id }));
+    localStorage.setItem(key, JSON.stringify({ activeProjectId: id, mode }));
   } catch {
     /* Server persistence remains available. */
   }
@@ -58,6 +74,10 @@ export function useEditor(start: EditorStart = {}) {
   const [project, setProject] = useState(initial.active.project);
   const current = useRef(project),
     fresh = useRef(initial.fresh);
+  const selectionMode = useRef(initial.selectionMode);
+  const recoveryIds = useRef(
+    new Set(initial.records.map((record) => record.project.id)),
+  );
   const [saves] = useState(() => {
     const coordinator = new ProjectSaves(
       {
@@ -143,21 +163,35 @@ export function useEditor(start: EditorStart = {}) {
   const load = useCallback(
     (next: Project) => {
       const parsed = projectSchema.parse(next);
+      if (
+        start.scope &&
+        parsed.dsh &&
+        parsed.dsh.workspacePath !== start.scope.workspacePath
+      )
+        throw new Error("此工程属于另一个 DSH 工作区，请在对应工作区打开。");
       cancelDebounce();
       const previousId = current.current.id;
       if (saves.get(previousId).dirty) void saves.enqueue(previousId);
       const restored = saves.open(parsed);
+      // Opening a retained old example is now a real user choice, not an automatic migration.
+      if (isLegacyAutoDemo(restored.project))
+        saves.edit({
+          ...restored.project,
+          example: { template: "opening-v1", source: "user" },
+        });
+      recoveryIds.current.add(restored.project.id);
       past.current = [];
       future.current = [];
       fresh.current = false;
+      selectionMode.current = "explicit";
       current.current = restored.project;
       setProject(restored.project);
       setSave(restored.state);
       updateHistory();
       persistRecord(initial.key, restored);
-      persistSelection(initial.key, restored.project.id);
+      persistSelection(initial.key, restored.project.id, selectionMode.current);
     },
-    [cancelDebounce, saves, updateHistory, initial.key],
+    [cancelDebounce, saves, updateHistory, initial.key, start.scope],
   );
 
   const saveNow = useCallback(async () => {
@@ -175,7 +209,7 @@ export function useEditor(start: EditorStart = {}) {
     cancelDebounce();
     const record = saves.get(project.id);
     persistRecord(initial.key, record);
-    persistSelection(initial.key, project.id);
+    persistSelection(initial.key, project.id, selectionMode.current);
     if (record.dirty)
       timer.current = setTimeout(() => {
         timer.current = undefined;
@@ -231,5 +265,14 @@ export function useEditor(start: EditorStart = {}) {
     acceptServer,
     reload,
     fresh,
+    recoveries: [...recoveryIds.current]
+      .map((id) => saves.get(id).project)
+      .filter(
+        (record) =>
+          record.id !== project.id &&
+          (!start.scope ||
+            !record.dsh ||
+            record.dsh.workspacePath === start.scope.workspacePath),
+      ),
   };
 }

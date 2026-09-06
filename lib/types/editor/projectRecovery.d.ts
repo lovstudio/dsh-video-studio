@@ -10,16 +10,18 @@ export type EditorStart = {
 };
 export interface StoredProjectRecovery {
     activeId?: string;
+    selectionMode?: "automatic" | "explicit";
     records: ProjectRecovery[];
 }
 type RecoveryStorage = Pick<Storage, "length" | "key" | "getItem">;
 export declare function projectRecoveryKey(scope?: EditorStart["scope"]): string;
 /** Read legacy storage without removing it; an invalid record cannot hide other drafts. */
 export declare function readProjectRecovery(storage: RecoveryStorage, scope?: EditorStart["scope"]): StoredProjectRecovery;
-/** Server defaults are session-specific; only an explicit local selection can cross sessions. */
+/** Unbound legacy drafts stay recoverable; only a recorded user choice can open one by default. */
 export declare function selectProjectRecovery(start: EditorStart, stored: StoredProjectRecovery, blank: Project): {
     active: ProjectRecovery;
     records: ProjectRecovery[];
     fresh: boolean;
+    selectionMode: "automatic" | "explicit";
 };
 export {};

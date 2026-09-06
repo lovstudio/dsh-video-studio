@@ -55,6 +55,7 @@ import {
   createProject,
   durationInFrames,
   formatTime,
+  isPristineExample,
   projectSchema,
   splitClip,
   uid,
@@ -74,10 +75,15 @@ import { Inspector } from "./Inspector";
 import { Timeline } from "./Timeline";
 import { IconButton } from "./ui";
 import { useDsh } from "./dsh";
+import { WorkspaceMedia } from "./WorkspaceMedia";
 
 type Panel = "assets" | "titles" | "captions" | "motion";
 const terminal = (status?: string) =>
   ["completed", "failed", "cancelled"].includes(status || "");
+const projectListPath = (scope?: EditorStart["scope"]) =>
+  scope
+    ? `projects?${new URLSearchParams({ sessionId: scope.sessionId, scope: "workspace" })}`
+    : "projects";
 function Modal({
   title,
   children,
@@ -145,7 +151,7 @@ export function App() {
       dsh.context?.sessionId,
     ],
     queryFn: ({ signal }) =>
-      request<Project[]>("projects", {
+      request<Project[]>(projectListPath(dsh.context), {
         signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
       }),
     enabled: dsh.embedded && !!dsh.context,
@@ -207,20 +213,18 @@ function Editor({
     saveNow,
     acceptServer,
     reload,
+    recoveries,
   } = useEditor(start);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(
       project.clips[0]?.id || null,
     ),
     [panel, setPanel] = useState<Panel>("assets");
-  const [frame, setFrame] = useState(
-      project.name === "灵感成片 · 开场练习" && project.clips.length === 3
-        ? 45
-        : 0,
-    ),
+  const [frame, setFrame] = useState(isPristineExample(project) ? 45 : 0),
     [playing, setPlaying] = useState(false),
     [error, setError] = useState("");
   const [projectsOpen, setProjectsOpen] = useState(false),
+    [workspaceOpen, setWorkspaceOpen] = useState(false),
     [menuOpen, setMenuOpen] = useState(false),
     [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [asrAsset, setAsrAsset] = useState(""),
@@ -248,8 +252,13 @@ function Editor({
       request<StudioCapabilities>("capabilities", { signal }),
   });
   const projects = useQuery({
-    queryKey: ["studio-projects"],
-    queryFn: ({ signal }) => request<Project[]>("projects", { signal }),
+    queryKey: [
+      "studio-projects",
+      dsh.context?.workspacePath,
+      dsh.context?.sessionId,
+    ],
+    queryFn: ({ signal }) =>
+      request<Project[]>(projectListPath(dsh.context), { signal }),
     enabled: projectsOpen,
   });
   const remoteProject = useQuery({
@@ -336,11 +345,7 @@ function Editor({
   }, [duration, frame, seek]);
   useEffect(() => {
     const opened = current.current;
-    seek(
-      opened.name === "灵感成片 · 开场练习" && opened.clips.length === 3
-        ? 45
-        : 0,
-    );
+    seek(isPristineExample(opened) ? 45 : 0);
   }, [project.id, current, seek]);
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -410,6 +415,7 @@ function Editor({
           'input,textarea,select,[contenteditable="true"],[role="dialog"]',
         ) ||
         projectsOpen ||
+        workspaceOpen ||
         shortcutsOpen
       )
         return;
@@ -457,6 +463,7 @@ function Editor({
     frame,
     project.fps,
     projectsOpen,
+    workspaceOpen,
     shortcutsOpen,
   ]);
   const uploads = useMutation({
@@ -649,7 +656,11 @@ function Editor({
     }
     loadProject(next);
   };
-  const visibleProjects = projects.data?.filter(
+  const visibleProjects = [
+    ...new Map(
+      [...recoveries, ...(projects.data ?? [])].map((item) => [item.id, item]),
+    ).values(),
+  ].filter(
     (item) =>
       !dsh.context ||
       !item.dsh ||
@@ -733,10 +744,15 @@ function Editor({
             )}
             {saveLabel}
             {save.status === "error" && <button onClick={retry}>重试</button>}
-            {project.name === "灵感成片 · 开场练习" &&
-              !project.assets.length && (
-                <span className="demo-label">示例工程</span>
-              )}
+            {isPristineExample(project) ? (
+              <span className="demo-label">示例工程</span>
+            ) : dsh.context && project.dsh ? (
+              <span className="demo-label">
+                {project.dsh.sessionId === dsh.context.sessionId
+                  ? "本会话工程"
+                  : "同工作区工程"}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="header-actions">
@@ -992,6 +1008,22 @@ function Editor({
                   <span>拖入视频、音频或图片</span>
                   <small>MP4 · MOV · MP3 · WAV · PNG · JPG</small>
                 </button>
+                {dsh.context && (
+                  <button
+                    className="workspace-browse-button"
+                    aria-label="浏览工作区素材"
+                    onClick={() => setWorkspaceOpen(true)}
+                  >
+                    <FolderOpen />
+                    <span>
+                      工作区素材
+                      <small>
+                        {dsh.context.workspaceName || dsh.context.workspacePath}
+                      </small>
+                    </span>
+                    <ChevronRight />
+                  </button>
+                )}
                 {project.assets.length ? (
                   <div className="asset-list">
                     {project.assets.map((asset) => (
@@ -1031,14 +1063,26 @@ function Editor({
                       <span />
                     </div>
                     <h3>
-                      好故事，
-                      <br />
-                      从一段素材开始。
+                      {dsh.context ? (
+                        "这个会话的素材"
+                      ) : (
+                        <>
+                          好故事，
+                          <br />
+                          从一段素材开始。
+                        </>
+                      )}
                     </h3>
                     <p>
-                      把素材放在这里。
-                      <br />
-                      你的下一个作品，正在酝酿。
+                      {dsh.context ? (
+                        "从工作区选择已有媒体，或拖入文件。加入时间线后即可预览和剪辑。"
+                      ) : (
+                        <>
+                          把素材放在这里。
+                          <br />
+                          你的下一个作品，正在酝酿。
+                        </>
+                      )}
                     </p>
                   </div>
                 )}
@@ -1421,8 +1465,21 @@ function Editor({
                 <h2>
                   {dsh.embedded ? "从这个会话开始创作" : "从空白开始创作"}
                 </h2>
-                <p>导入素材或添加标题，作品会自动保存在当前工程。</p>
+                <p>
+                  {dsh.context
+                    ? `“${dsh.context.sessionTitle || project.name}”尚未添加片段。选择当前工作区的素材开始剪辑。`
+                    : "导入素材或添加标题，作品会自动保存在当前工程。"}
+                </p>
                 <div className="empty-actions">
+                  {dsh.context && (
+                    <button
+                      className="secondary-button"
+                      onClick={() => setWorkspaceOpen(true)}
+                    >
+                      <FolderOpen />
+                      浏览工作区素材
+                    </button>
+                  )}
                   <button
                     className="secondary-button"
                     onClick={() => fileInput.current?.click()}
@@ -1438,9 +1495,6 @@ function Editor({
                     添加标题
                   </button>
                 </div>
-                <button className="empty-demo" onClick={() => newProject(true)}>
-                  打开示例工程
-                </button>
               </div>
             )}
           </div>
@@ -1567,6 +1621,22 @@ function Editor({
           e.target.value = "";
         }}
       />
+      {workspaceOpen && dsh.context && (
+        <Modal title="工作区素材" onClose={() => setWorkspaceOpen(false)}>
+          <WorkspaceMedia
+            key={dsh.context.sessionId}
+            sessionId={dsh.context.sessionId}
+            maxBytes={capabilities.data?.maxUploadBytes || 250 * 1024 * 1024}
+            onImport={(asset) => {
+              if (current.current.id !== project.id)
+                throw new Error("工程已切换，素材未加入当前工程");
+              if (current.current.assets.length >= 500)
+                throw new Error("每个工程最多支持 500 个素材");
+              edit((value) => ({ ...value, assets: [...value.assets, asset] }));
+            }}
+          />
+        </Modal>
+      )}
       {projectsOpen && (
         <Modal title="你的作品" onClose={() => setProjectsOpen(false)}>
           <p className="modal-description">

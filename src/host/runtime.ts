@@ -16,6 +16,7 @@ import {
 import { JobQueue } from "./jobs";
 import { RemotionExporter } from "./render";
 import { MAX_UPLOAD_BYTES, StudioStore } from "./storage";
+import { WorkspaceFiles, type WorkspaceResolver } from "./workspace";
 
 export interface StudioConfig {
   dataDir?: string;
@@ -37,6 +38,7 @@ export interface StudioRuntimeOptions {
   studioDir: string;
   remotionDir: string;
   authorize(req: IncomingMessage): number | undefined;
+  resolveWorkspace?: WorkspaceResolver;
 }
 
 const configSchema = z.object({
@@ -64,7 +66,7 @@ export function resolveStudioConfig(
     dataDir:
       config.dataDir ??
       env.DSH_VIDEO_DATA_DIR ??
-      resolve(homedir(), ".dsh/video-studio"),
+      resolve(env.DSH_HOME || resolve(homedir(), ".dsh"), "video-studio"),
     browserExecutable:
       config.browserExecutable ?? env.DSH_VIDEO_BROWSER_EXECUTABLE,
     renderConcurrency: config.renderConcurrency ?? 2,
@@ -89,11 +91,13 @@ export class StudioRuntime {
   readonly asr: AsrRegistry;
   readonly exporter: RemotionExporter;
   readonly config: ReturnType<typeof resolveStudioConfig>;
+  readonly workspace: WorkspaceFiles;
   private readonly shutdown = new AbortController();
   private readonly requests = new Set<Promise<void>>();
   constructor(private readonly options: StudioRuntimeOptions) {
     this.config = resolveStudioConfig(options.config);
     this.store = new StudioStore(this.config.dataDir);
+    this.workspace = new WorkspaceFiles(options.resolveWorkspace);
     this.jobs = new JobQueue(this.config.maxQueuedJobs);
     this.asr = new AsrRegistry(this.config.asrProvider);
     const apiKey = process.env[this.config.asrApiKeyEnv];
@@ -125,6 +129,12 @@ export class StudioRuntime {
   }
   async init(): Promise<void> {
     await this.store.init();
+  }
+  async resolveWorkspace(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    return this.workspace.root(sessionId, signal);
   }
   async capabilities(): Promise<StudioCapabilities> {
     return {
@@ -203,7 +213,100 @@ export class StudioRuntime {
       return;
     }
     if (route === "/api/projects" && method === "GET") {
-      json(res, 200, await this.store.projects());
+      const sessionId = url.searchParams.get("sessionId");
+      if (sessionId)
+        await this.workspaceRequest(req, res, async (signal) => {
+          const projects = await this.store.projects();
+          json(
+            res,
+            200,
+            await this.workspace.filterProjects(
+              projects,
+              sessionId,
+              z
+                .enum(["session", "workspace"])
+                .parse(url.searchParams.get("scope") ?? "session"),
+              signal,
+            ),
+          );
+        });
+      else json(res, 200, await this.store.projects());
+      return;
+    }
+    if (route === "/api/workspace" && method === "GET") {
+      await this.workspaceRequest(req, res, async (signal) => {
+        json(
+          res,
+          200,
+          await this.workspace.list(
+            url.searchParams.get("sessionId") ?? "",
+            url.searchParams.get("path") ?? "",
+            signal,
+          ),
+        );
+      });
+      return;
+    }
+    if (
+      route === "/workspace/media" &&
+      (method === "GET" || method === "HEAD")
+    ) {
+      await this.workspaceRequest(
+        req,
+        res,
+        async (signal) => {
+          const media = await this.workspace.media(
+            url.searchParams.get("sessionId") ?? "",
+            url.searchParams.get("path") ?? "",
+            signal,
+          );
+          await serveFile(req, res, media.file);
+        },
+        120_000,
+      );
+      return;
+    }
+    if (route === "/api/workspace/import" && method === "POST") {
+      await this.workspaceRequest(
+        req,
+        res,
+        async (signal) => {
+          const body = z
+            .object({
+              sessionId: z.string(),
+              path: z.string().min(1),
+              duration: z.number().positive().max(3600),
+              width: z.number().positive().optional(),
+              height: z.number().positive().optional(),
+            })
+            .strict()
+            .parse(await readJson(req, 16 * 1024));
+          const media = await this.workspace.media(
+            body.sessionId,
+            body.path,
+            signal,
+          );
+          const query = new URLSearchParams({
+            name: media.name,
+            kind: media.kind,
+            duration: String(body.duration),
+          });
+          if (body.width !== undefined) query.set("width", String(body.width));
+          if (body.height !== undefined)
+            query.set("height", String(body.height));
+          json(
+            res,
+            201,
+            await this.store.importFile(
+              media.file,
+              query,
+              signal,
+              this.config.maxUploadBytes,
+            ),
+          );
+        },
+        120_000,
+      );
       return;
     }
     const projectMatch = /^\/api\/projects\/([^/]+)$/.exec(route);
@@ -345,5 +448,50 @@ export class StudioRuntime {
     await Promise.allSettled([...this.requests]);
     await this.store.dispose();
     this.asr.clear();
+  }
+  private async workspaceRequest(
+    req: IncomingMessage,
+    res: ServerResponse,
+    action: (signal: AbortSignal) => Promise<void>,
+    timeoutMs = 15_000,
+  ): Promise<void> {
+    const disconnected = new AbortController();
+    const close = () => disconnected.abort();
+    req.once("aborted", close);
+    res.once("close", close);
+    const signal = AbortSignal.any([
+      this.shutdown.signal,
+      disconnected.signal,
+      AbortSignal.timeout(timeoutMs),
+    ]);
+    let onAbort: () => void = () => {};
+    const interrupted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => {
+        if (!req.complete) req.destroy();
+        reject(
+          new HttpError(
+            signal.reason?.name === "TimeoutError" ? 504 : 499,
+            signal.reason?.name === "TimeoutError"
+              ? "读取工作区超时，请重试或选择较小的目录"
+              : "工作区请求已取消",
+          ),
+        );
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    const operation = action(signal);
+    this.requests.add(operation);
+    void operation.then(
+      () => this.requests.delete(operation),
+      () => this.requests.delete(operation),
+    );
+    try {
+      await Promise.race([operation, interrupted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      req.off("aborted", close);
+      res.off("close", close);
+    }
   }
 }

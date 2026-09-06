@@ -20,4 +20,5 @@ export declare function useEditor(start?: EditorStart): {
     acceptServer: (remote: Project, force?: boolean) => void;
     reload: () => Promise<void>;
     fresh: import("react").RefObject<boolean>;
+    recoveries: Project[];
 };

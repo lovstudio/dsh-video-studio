@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import {
   mkdir,
+  lstat,
   open,
   readFile,
   readdir,
@@ -8,6 +9,7 @@ import {
   unlink,
 } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
+import type { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { extname, join, resolve } from "node:path";
 import { assetSchema, projectSchema } from "../core/project";
@@ -20,6 +22,12 @@ const EXTENSIONS: Record<AssetKind, ReadonlySet<string>> = {
   video: new Set([".mp4", ".webm", ".mov", ".m4v"]),
   audio: new Set([".mp3", ".m4a", ".wav", ".ogg", ".flac", ".webm"]),
 };
+export function mediaKind(name: string): AssetKind | undefined {
+  const extension = extname(name).toLowerCase();
+  return (Object.keys(EXTENSIONS) as AssetKind[]).find((kind) =>
+    EXTENSIONS[kind].has(extension),
+  );
+}
 export interface StoredAsset {
   asset: Asset;
   file: string;
@@ -64,11 +72,22 @@ export class StudioStore {
         mkdir(join(this.root, dir), { recursive: true, mode: 0o700 }),
       ),
     );
+    await Promise.all(
+      ["projects", "assets", "exports"].map((dir) => this.directory(dir)),
+    );
+  }
+  private async directory(name: string): Promise<string> {
+    const directory = join(this.root, name);
+    const info = await lstat(directory);
+    if (info.isSymbolicLink() || !info.isDirectory())
+      throw new HttpError(403, "工作台存储目录不可使用符号链接");
+    return directory;
   }
   exportPath(id: string): string {
     return join(this.root, "exports", `${assertId(id)}.mp4`);
   }
   async asset(id: string): Promise<StoredAsset> {
+    await this.directory("assets");
     const raw: unknown = JSON.parse(
       await readFile(join(this.root, "assets", `${assertId(id)}.json`), "utf8"),
     );
@@ -116,6 +135,7 @@ export class StudioStore {
   }
   async projects(): Promise<Project[]> {
     await this.writes;
+    await this.directory("projects");
     const files = (await readdir(join(this.root, "projects"))).filter(
       (file) => file.endsWith(".json") && SAFE_ID.test(file.slice(0, -5)),
     );
@@ -132,6 +152,7 @@ export class StudioStore {
   }
   async project(id: string): Promise<Project> {
     await this.writes;
+    await this.directory("projects");
     return projectSchema.parse(
       JSON.parse(
         await readFile(
@@ -149,6 +170,7 @@ export class StudioStore {
     assertId(id);
     const snapshot = structuredClone(value);
     const write = this.writes.then(async () => {
+      await this.directory("projects");
       const project = await this.canonicalProject(snapshot);
       if (project.id !== id) throw new HttpError(400, "工程 ID 与路径不一致");
       let previous: Project | undefined;
@@ -189,11 +211,12 @@ export class StudioStore {
     return write;
   }
   async upload(
-    req: IncomingMessage,
+    req: IncomingMessage | (Readable & { headers: IncomingMessage["headers"] }),
     query: URLSearchParams,
     signal: AbortSignal,
     maxBytes = MAX_UPLOAD_BYTES,
   ): Promise<Asset> {
+    await this.directory("assets");
     const name = query.get("name") ?? "";
     const kind = query.get("kind") as AssetKind;
     const extension = extname(name).toLowerCase();
@@ -220,7 +243,8 @@ export class StudioStore {
     const temporary = `${target}.upload`;
     const file = await open(temporary, "wx", 0o600);
     const abort = (): void => {
-      req.destroy(new Error("Upload cancelled"));
+      // The AbortSignal owns the failure; an extra stream error can outlive its iterator.
+      req.destroy();
     };
     signal.addEventListener("abort", abort, { once: true });
     let size = 0;
@@ -237,6 +261,7 @@ export class StudioStore {
         }
         await file.writeFile(bytes);
       }
+      signal.throwIfAborted();
       if (size === 0) throw new HttpError(400, "素材文件为空");
       await file.sync();
       await file.close();
@@ -258,6 +283,34 @@ export class StudioStore {
         await removeIfPresent(target);
         await removeIfPresent(join(this.root, "assets", `${asset.id}.json`));
       }
+    }
+  }
+  async importFile(
+    path: string,
+    query: URLSearchParams,
+    signal: AbortSignal,
+    maxBytes = MAX_UPLOAD_BYTES,
+  ): Promise<Asset> {
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let source: Readable | undefined;
+    try {
+      const info = await file.stat();
+      if (!info.isFile() || info.size === 0)
+        throw new HttpError(400, "素材文件为空或不可读取");
+      if (info.size > maxBytes)
+        throw new HttpError(413, "素材超过上传大小限制");
+      source = file.createReadStream({ autoClose: false });
+      return await this.upload(
+        Object.assign(source, {
+          headers: { "content-length": String(info.size) },
+        }),
+        query,
+        signal,
+        maxBytes,
+      );
+    } finally {
+      source?.destroy();
+      await file.close();
     }
   }
   async dispose(): Promise<void> {

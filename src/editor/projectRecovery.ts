@@ -1,4 +1,4 @@
-import { projectSchema } from "../core/project";
+import { isLegacyAutoDemo, projectSchema } from "../core/project";
 import type { Project } from "../types";
 import type { ProjectRecovery } from "./projectSaves";
 
@@ -12,6 +12,7 @@ export type EditorStart = {
 };
 export interface StoredProjectRecovery {
   activeId?: string;
+  selectionMode?: "automatic" | "explicit";
   records: ProjectRecovery[];
 }
 type RecoveryStorage = Pick<Storage, "length" | "key" | "getItem">;
@@ -51,6 +52,7 @@ export function readProjectRecovery(
     : [projectRecoveryKey()];
   const records = new Map<string, ProjectRecovery>();
   let activeId: string | undefined;
+  let selectionMode: StoredProjectRecovery["selectionMode"];
   for (const base of keys) {
     try {
       for (let index = 0; index < storage.length; index += 1) {
@@ -66,29 +68,40 @@ export function readProjectRecovery(
         }
       }
       const previous = JSON.parse(storage.getItem(base) || "null");
-      if (typeof previous?.activeProjectId === "string")
+      if (typeof previous?.activeProjectId === "string") {
         activeId = previous.activeProjectId;
-      else if (previous) {
+        // Older versions wrote activeProjectId even for automatically created demos.
+        selectionMode = previous.mode === "explicit" ? "explicit" : "automatic";
+      } else if (previous) {
         const legacy = parseRecovery(previous);
         if (!records.has(legacy.project.id))
           records.set(legacy.project.id, legacy);
         activeId = legacy.project.id;
+        selectionMode = "automatic";
       }
     } catch {
       /* Server recovery still works if browser storage is unavailable. */
     }
   }
-  return { activeId, records: [...records.values()] };
+  return { activeId, selectionMode, records: [...records.values()] };
 }
 
-/** Server defaults are session-specific; only an explicit local selection can cross sessions. */
+/** Unbound legacy drafts stay recoverable; only a recorded user choice can open one by default. */
 export function selectProjectRecovery(
   start: EditorStart,
   stored: StoredProjectRecovery,
   blank: Project,
-): { active: ProjectRecovery; records: ProjectRecovery[]; fresh: boolean } {
+): {
+  active: ProjectRecovery;
+  records: ProjectRecovery[];
+  fresh: boolean;
+  selectionMode: "automatic" | "explicit";
+} {
   const inWorkspace = (project: Project) =>
     !start.scope || project.dsh?.workspacePath === start.scope.workspacePath;
+  const inSession = (project: Project) =>
+    !start.scope ||
+    (inWorkspace(project) && project.dsh?.sessionId === start.scope.sessionId);
   const server = new Map(
     start.projects?.map((project) => [project.id, project]),
   );
@@ -106,26 +119,34 @@ export function selectProjectRecovery(
     }),
   );
   const restored = stored.activeId ? records.get(stored.activeId) : undefined;
-  let active =
-    restored && (!restored.project.dsh || inWorkspace(restored.project))
+  const explicit =
+    stored.selectionMode === "explicit" &&
+    restored &&
+    (!restored.project.dsh || inWorkspace(restored.project));
+  let active = explicit
+    ? restored
+    : restored &&
+        inSession(restored.project) &&
+        !isLegacyAutoDemo(restored.project)
       ? restored
       : undefined;
   if (!active && start.scope) {
-    const { sessionId } = start.scope;
     const candidate = [...server.values()]
       .filter((project) => {
         const local = records.get(project.id);
         return (
-          inWorkspace(project) &&
-          project.dsh?.sessionId === sessionId &&
-          (!local?.dirty || inWorkspace(local.project))
+          inSession(project) &&
+          !isLegacyAutoDemo(project) &&
+          // Do not discard an unbound/foreign unsaved branch with the same ID.
+          (!local?.dirty ||
+            (inSession(local.project) && !isLegacyAutoDemo(local.project)))
         );
       })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     if (candidate) {
       const local = records.get(candidate.id);
       active =
-        local && inWorkspace(local.project)
+        local && inSession(local.project) && !isLegacyAutoDemo(local.project)
           ? local
           : {
               project: candidate,
@@ -133,6 +154,16 @@ export function selectProjectRecovery(
               dirty: false,
             };
     }
+  }
+  if (!active) {
+    active = [...records.values()]
+      .filter(
+        (record) =>
+          inSession(record.project) && !isLegacyAutoDemo(record.project),
+      )
+      .sort((a, b) =>
+        b.project.updatedAt.localeCompare(a.project.updatedAt),
+      )[0];
   }
   const fresh = !active;
   active ??= {
@@ -152,5 +183,10 @@ export function selectProjectRecovery(
     dirty: true,
   };
   records.set(active.project.id, active);
-  return { active, records: [...records.values()], fresh };
+  return {
+    active,
+    records: [...records.values()],
+    fresh,
+    selectionMode: explicit ? "explicit" : "automatic",
+  };
 }

@@ -110,6 +110,10 @@ export declare const projectSchema: z.ZodObject<{
         }>;
     }, z.core.$strip>>;
     updatedAt: z.ZodString;
+    example: z.ZodOptional<z.ZodObject<{
+        template: z.ZodLiteral<"opening-v1">;
+        source: z.ZodLiteral<"user">;
+    }, z.core.$strip>>;
     dsh: z.ZodOptional<z.ZodObject<{
         workspacePath: z.ZodString;
         sessionId: z.ZodString;
@@ -123,7 +127,12 @@ export declare const tracks: {
 }[];
 export declare const durationInFrames: (project: Project) => number;
 export declare function createClip(overrides?: Partial<Clip>): Clip;
+/** A project starts empty; passing true represents the user's explicit example choice. */
 export declare function createProject(demo?: boolean): Project;
+/** Compare all editable template content, never its generated IDs or save metadata. */
+export declare function isPristineExample(project: Project): boolean;
+/** Old versions generated this exact template automatically without recording intent. */
+export declare function isLegacyAutoDemo(project: Project): boolean;
 export declare function addAssetClip(project: Project, asset: Asset, start?: number): Project;
 export declare function splitClip(project: Project, clipId: string, at: number): Project;
 export declare function updateClip(project: Project, clipId: string, patch: Partial<Clip>): Project;

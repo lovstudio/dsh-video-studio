@@ -26,11 +26,21 @@ const recovery = (value: Project, dirty = false): ProjectRecovery => ({
   revision: value.updatedAt,
   dirty,
 });
+const legacyDemo = (scope?: EditorStart["scope"]): Project => {
+  const { example: _example, ...legacy } = createProject(true);
+  return { ...legacy, ...(scope ? { dsh: scope } : {}) };
+};
 const select = (
   start: EditorStart,
   records: ProjectRecovery[] = [],
   activeId?: string,
-) => selectProjectRecovery(start, { records, activeId }, createProject(false));
+  selectionMode?: "explicit" | "automatic",
+) =>
+  selectProjectRecovery(
+    start,
+    { records, activeId, selectionMode },
+    createProject(false),
+  );
 function storage(entries: [string, unknown][]) {
   const values = new Map(
     entries.map(([key, value]) => [key, JSON.stringify(value)]),
@@ -122,6 +132,7 @@ test("an explicit local selection may reopen another session's project in the sa
     { scope: a, projects: [explicit.project, own] },
     [explicit],
     explicit.project.id,
+    "explicit",
   );
   assert.equal(result.active, explicit);
   const withoutSelection = select(
@@ -141,7 +152,7 @@ test("a clean local active project missing from a successful server listing is r
 });
 
 test("an unselected old demo and a cross-workspace active draft do not become session defaults", () => {
-  const demo = recovery(createProject(true), true),
+  const demo = recovery(legacyDemo(), true),
     elsewhere = recovery(project({ ...a, workspacePath: "/elsewhere" }), true);
   for (const activeId of [undefined, elsewhere.project.id]) {
     const result = select(
@@ -157,22 +168,35 @@ test("an unselected old demo and a cross-workspace active draft do not become se
   }
 });
 
-test("an explicitly active unbound legacy draft stays visible without being silently bound", () => {
+test("an unmarked legacy selection cannot displace this session's project, but its edited draft survives", () => {
   const local = recovery(
-    { ...createProject(true), name: "旧版本尚未关联的剪辑" },
+    { ...legacyDemo(), name: "旧版本尚未关联的剪辑" },
     true,
   );
   const legacyKey = `dsh-video-studio-recovery-v1:${a.sessionId}`;
   const stored = readProjectRecovery(storage([[legacyKey, local]]), a);
+  const own = project(a);
   const result = selectProjectRecovery(
-    { scope: a, projects: [project(a)] },
+    { scope: a, projects: [own] },
     stored,
     createProject(false),
   );
-  assert.deepEqual(result.active, local);
-  assert.equal(result.active.project.dsh, undefined);
-  assert.equal(result.active.dirty, true);
+  assert.equal(result.active.project, own);
+  assert.deepEqual(
+    result.records.find((r) => r.project.id === local.project.id),
+    local,
+  );
+  assert.equal(local.project.dsh, undefined);
+  assert.equal(local.dirty, true);
   assert.equal(result.fresh, false);
+  const explicit = select(
+    { scope: a, projects: [own] },
+    [local],
+    local.project.id,
+    "explicit",
+  );
+  assert.equal(explicit.active, local);
+  assert.equal(explicit.active.project.dsh, undefined);
 });
 
 test("workspace/session storage keys are isolated and legacy session records are read without removal", () => {
@@ -216,14 +240,205 @@ test("workspace/session storage keys are isolated and legacy session records are
   );
 });
 
-test("standalone mode preserves legacy local work but no longer starts with a demo", () => {
-  const demo = createProject(true);
+test("standalone mode retains an untouched legacy demo without making it the default", () => {
+  const demo = legacyDemo();
   const previous = readProjectRecovery(storage([[projectRecoveryKey(), demo]]));
   const restored = selectProjectRecovery({}, previous, createProject(false));
-  assert.deepEqual(restored.active.project, demo);
+  assert.notEqual(restored.active.project.id, demo.id);
+  assert.ok(restored.records.some((r) => r.project.id === demo.id));
+  assert.deepEqual(restored.active.project.clips, []);
   assert.equal(restored.active.dirty, true);
-  assert.equal(restored.fresh, false);
+  assert.equal(restored.fresh, true);
   const blank = select({});
   assert.deepEqual(blank.active.project.clips, []);
   assert.equal(blank.active.project.dsh, undefined);
+});
+
+test("bound old demos from either legacy or migrated active storage no longer win automatic recovery", () => {
+  for (const key of [
+    `dsh-video-studio-recovery-v1:${a.sessionId}`,
+    projectRecoveryKey(a),
+  ]) {
+    for (const dirty of [false, true]) {
+      const old = recovery(legacyDemo(a), dirty);
+      const own = { ...project(a), name: "本会话真实作品" };
+      const data = storage([
+        [key, { activeProjectId: old.project.id }],
+        [`${key}:project:${old.project.id}`, old],
+      ]);
+      const before = [...data.values];
+      const restored = selectProjectRecovery(
+        { scope: a, projects: [old.project, own] },
+        readProjectRecovery(data, a),
+        createProject(),
+      );
+      assert.equal(restored.active.project, own);
+      assert.equal(restored.selectionMode, "automatic");
+      assert.deepEqual(
+        restored.records.find((r) => r.project.id === old.project.id),
+        old,
+      );
+      assert.deepEqual([...data.values], before);
+    }
+  }
+});
+
+test("server-only bound old demos are retained on the server but are not session defaults", () => {
+  const oldest = { ...legacyDemo(a), updatedAt: stamp(1) };
+  const latest = { ...legacyDemo(a), updatedAt: stamp(3) };
+  const source = JSON.stringify([oldest, latest]);
+  const empty = select({
+    scope: { ...a, sessionTitle: "正在创作的会话" },
+    projects: [oldest, latest],
+  });
+  assert.equal(empty.fresh, true);
+  assert.equal(empty.active.project.name, "正在创作的会话");
+  assert.deepEqual(empty.active.project.dsh, a);
+  assert.deepEqual(empty.active.project.clips, []);
+  assert.equal(JSON.stringify([oldest, latest]), source);
+  const own = project(a, 2);
+  assert.equal(
+    select({ scope: a, projects: [oldest, own, latest] }).active.project,
+    own,
+  );
+});
+
+test("edited old demos stay recoverable, including an unbound six-clip user's version", () => {
+  const edited = {
+    ...legacyDemo(a),
+    clips: legacyDemo().clips.map((clip, i) =>
+      i === 0 ? { ...clip, text: "我的新开场" } : clip,
+    ),
+  };
+  for (const dirty of [false, true]) {
+    const local = recovery(edited, dirty);
+    assert.equal(
+      select({ scope: a, projects: [edited] }, [local], edited.id).active,
+      local,
+    );
+  }
+  const six = {
+    ...legacyDemo(),
+    clips: [...legacyDemo().clips, ...legacyDemo().clips],
+  };
+  const local = recovery(six, true);
+  const before = JSON.stringify(local);
+  const own = project(a);
+  const restored = select({ scope: a, projects: [own] }, [local], six.id);
+  assert.equal(restored.active.project, own);
+  assert.ok(restored.records.includes(local));
+  assert.equal(JSON.stringify(local), before);
+  const manual = select(
+    { scope: a, projects: [own] },
+    [local],
+    six.id,
+    "explicit",
+  );
+  assert.equal(manual.active, local);
+  assert.equal(manual.active.project.clips.length, 6);
+});
+
+test("a user-created example remains a valid session default and survives the project schema", () => {
+  const example = { ...createProject(true), dsh: a };
+  const local = recovery(example);
+  assert.equal(
+    select({ scope: a, projects: [example] }).active.project,
+    example,
+  );
+  assert.equal(select({ scope: a }, [local], example.id).active, local);
+  const key = projectRecoveryKey(a);
+  const stored = readProjectRecovery(
+    storage([
+      [key, { activeProjectId: example.id, mode: "explicit" }],
+      [`${key}:project:${example.id}`, local],
+    ]),
+    a,
+  );
+  assert.equal(stored.selectionMode, "explicit");
+  assert.deepEqual(stored.records[0].project.example, example.example);
+  const result = selectProjectRecovery({ scope: a }, stored, createProject());
+  assert.equal(result.active.project.id, example.id);
+  assert.equal(result.selectionMode, "explicit");
+});
+
+test("automatic or unmarked selections cannot leak another session into this one", () => {
+  const another = recovery(project(b), true);
+  const own = project(a, 2);
+  for (const mode of [undefined, "automatic"] as const) {
+    const result = select(
+      { scope: a, projects: [another.project, own] },
+      [another],
+      another.project.id,
+      mode,
+    );
+    assert.equal(result.active.project, own);
+    assert.ok(result.records.includes(another));
+    const noOwn = select(
+      { scope: a, projects: [another.project] },
+      [another],
+      another.project.id,
+      mode,
+    );
+    assert.equal(noOwn.fresh, true);
+    assert.deepEqual(noOwn.active.project.dsh, a);
+  }
+  const manual = select(
+    { scope: a, projects: [own] },
+    [another],
+    another.project.id,
+    "explicit",
+  );
+  assert.equal(manual.active, another);
+});
+
+test("legacy session-only keys cannot import another workspace even when explicitly selected", () => {
+  const foreign = recovery(project({ ...a, workspacePath: "/foreign" }), true);
+  const key = `dsh-video-studio-recovery-v1:${a.sessionId}`;
+  for (const mode of [undefined, "automatic", "explicit"]) {
+    const data = storage([
+      [key, { activeProjectId: foreign.project.id, mode }],
+      [`${key}:project:${foreign.project.id}`, foreign],
+    ]);
+    const stored = readProjectRecovery(data, a);
+    const result = selectProjectRecovery({ scope: a }, stored, createProject());
+    assert.equal(result.fresh, true);
+    assert.deepEqual(result.active.project.dsh, a);
+    assert.deepEqual(
+      result.records.find((r) => r.project.id === foreign.project.id),
+      foreign,
+    );
+  }
+});
+
+test("a dirty unbound branch is never overwritten by a server default with the same ID", () => {
+  const server = project(a);
+  const { dsh: _dsh, ...unbound } = server;
+  const local = recovery({ ...unbound, name: "未关联且未保存的修改" }, true);
+  const result = select(
+    { scope: a, projects: [server] },
+    [local],
+    local.project.id,
+  );
+  assert.equal(result.fresh, true);
+  assert.notEqual(result.active.project.id, server.id);
+  assert.ok(result.records.includes(local));
+  assert.equal(local.project.name, "未关联且未保存的修改");
+});
+
+test("a server candidate cannot indirectly reactivate a dirty legacy demo through its local branch", () => {
+  const local = recovery(legacyDemo(a), true);
+  const remote = {
+    ...local.project,
+    name: "Agent 已完成的新版本",
+    updatedAt: stamp(100),
+  };
+  const own = project(a, 2);
+  const restored = select(
+    { scope: a, projects: [remote, own] },
+    [local],
+    local.project.id,
+  );
+  assert.equal(restored.active.project, own);
+  assert.ok(restored.records.includes(local));
+  assert.equal(local.project.name, "灵感成片 · 开场练习");
 });

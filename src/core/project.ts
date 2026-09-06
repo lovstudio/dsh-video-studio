@@ -57,6 +57,9 @@ export const projectSchema = z
     assets: z.array(assetSchema).max(500),
     clips: z.array(clipSchema).max(3000),
     updatedAt: z.string().datetime(),
+    example: z
+      .object({ template: z.literal("opening-v1"), source: z.literal("user") })
+      .optional(),
     dsh: z
       .object({
         workspacePath: z.string().min(1).max(4096),
@@ -115,28 +118,50 @@ export const tracks: { id: TrackId; name: string; short: string }[] = [
 ];
 export const durationInFrames = (project: Project) =>
   Math.max(1, ...project.clips.map((clip) => clip.start + clip.duration));
+const clipDefaults: Omit<Clip, "id"> = {
+  trackId: "titles",
+  kind: "title",
+  name: "新的标题",
+  start: 0,
+  duration: 150,
+  sourceStart: 0,
+  text: "让灵感，成为作品。",
+  motion: "rise",
+  volume: 1,
+  opacity: 1,
+  scale: 1,
+  x: 0,
+  y: 0,
+  fontSize: 92,
+  tone: "clay",
+};
+const openingClips: Omit<Clip, "id">[] = [
+  { ...clipDefaults, name: "开场 · 灵感成片", duration: 180 },
+  {
+    ...clipDefaults,
+    name: "第二幕 · 每一帧",
+    text: "每一帧，都有表达。",
+    start: 180,
+    duration: 180,
+    tone: "sage",
+    motion: "drift",
+  },
+  {
+    ...clipDefaults,
+    name: "片尾 · 即刻创作",
+    text: "现在，开始创作。",
+    start: 360,
+    duration: 120,
+    tone: "ink",
+    motion: "fade",
+  },
+];
 export function createClip(overrides: Partial<Clip> = {}): Clip {
-  return {
-    id: uid(),
-    trackId: "titles",
-    kind: "title",
-    name: "新的标题",
-    start: 0,
-    duration: 150,
-    sourceStart: 0,
-    text: "让灵感，成为作品。",
-    motion: "rise",
-    volume: 1,
-    opacity: 1,
-    scale: 1,
-    x: 0,
-    y: 0,
-    fontSize: 92,
-    tone: "clay",
-    ...overrides,
-  };
+  return { id: uid(), ...clipDefaults, ...overrides };
 }
-export function createProject(demo = true): Project {
+
+/** A project starts empty; passing true represents the user's explicit example choice. */
+export function createProject(demo = false): Project {
   return {
     version: 1,
     id: uid(),
@@ -145,29 +170,40 @@ export function createProject(demo = true): Project {
     width: 1920,
     height: 1080,
     assets: [],
-    clips: demo
-      ? [
-          createClip({ name: "开场 · 灵感成片", duration: 180 }),
-          createClip({
-            name: "第二幕 · 每一帧",
-            text: "每一帧，都有表达。",
-            start: 180,
-            duration: 180,
-            tone: "sage",
-            motion: "drift",
-          }),
-          createClip({
-            name: "片尾 · 即刻创作",
-            text: "现在，开始创作。",
-            start: 360,
-            duration: 120,
-            tone: "ink",
-            motion: "fade",
-          }),
-        ]
-      : [],
+    clips: demo ? openingClips.map((clip) => createClip(clip)) : [],
+    ...(demo
+      ? { example: { template: "opening-v1", source: "user" } as const }
+      : {}),
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** Compare all editable template content, never its generated IDs or save metadata. */
+export function isPristineExample(project: Project): boolean {
+  if (
+    project.version !== 1 ||
+    project.name !== "灵感成片 · 开场练习" ||
+    project.fps !== 30 ||
+    project.width !== 1920 ||
+    project.height !== 1080 ||
+    project.assets.length !== 0 ||
+    project.clips.length !== openingClips.length
+  )
+    return false;
+  return openingClips.every((expected, index) => {
+    const actual = project.clips[index];
+    return (
+      actual.assetId === undefined &&
+      (Object.keys(expected) as (keyof typeof expected)[]).every(
+        (key) => actual[key] === expected[key],
+      )
+    );
+  });
+}
+
+/** Old versions generated this exact template automatically without recording intent. */
+export function isLegacyAutoDemo(project: Project): boolean {
+  return project.example === undefined && isPristineExample(project);
 }
 export function addAssetClip(
   project: Project,

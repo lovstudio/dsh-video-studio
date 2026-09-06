@@ -13,9 +13,9 @@ npx @deepseek-ai/dsh plugin --profile web add -w github:lovstudio/dsh-video-stud
 npx @deepseek-ai/dsh web
 ```
 
-If DSH is already running, restart it after installation. Select a workspace and open the **Video** tab in an existing conversation. A blank conversation offers **Start editing** above the composer, without requiring a model key or sending a message. The sidebar entry helps you choose a workspace. The GitHub repository includes all runtime builds; no manual build is required.
+If DSH is already running, restart it after installation. Select a workspace and open the **Video** tab in an existing conversation. A blank conversation offers **Start editing** above the composer, without requiring a model key or sending a message. The GitHub repository includes all runtime builds; no manual build is required.
 
-To pin a release, append its tag: `github:lovstudio/dsh-video-studio#v0.2.1`.
+To pin a release, append its tag: `github:lovstudio/dsh-video-studio#v0.2.2`.
 
 ![DSH Video Studio editor](tests/expected/editor.png)
 
@@ -25,7 +25,11 @@ The screenshot illustrates editing a demo. New sessions start with an empty time
 
 The editor combines a media library, a frame-accurate preview, clip properties, and four timeline lanes: video, audio, titles, and captions. Import media, arrange and trim clips, split at the playhead, edit titles and captions, change volume and framing, and undo or redo edits. Portrait and square canvases share the same project model. The editor restores the current session's saved project first. New sessions start with an empty timeline; the title demo can be created explicitly with Open demo. Existing projects and demos are preserved.
 
-Project JSON and managed media stay on the host. Server saves are atomic. JSON backups preserve references to media; they do not embed the source files. Render jobs use an immutable project snapshot and expose progress, cancellation, and a downloadable MP4. SRT import/export works without an ASR account.
+Unchanged demos created automatically by older versions are retained for manual opening and no longer replace a session's actual project. Modified drafts are preserved. Automatic recovery is scoped to the current session and workspace; an explicit selection can reopen another project in the same workspace.
+
+**Browse workspace media** lists folders and supported media from the current session's actual DSH workspace. Select a video, audio file, or image to copy it into this project's media library, then add it to the timeline. Source files remain unchanged. The host resolves the workspace through DSH session metadata, rejects path escapes, and streams media with Range support. Directory browsing is bounded and skips hidden folders, dependencies, and build caches. Remotion projects are detected from their package manifest; source compositions are not automatically executed or converted into timeline clips.
+
+Project JSON and managed media stay on the host, under `$DSH_HOME/video-studio` (or `~/.dsh/video-studio` when unset), unless `dataDir` or `DSH_VIDEO_DATA_DIR` overrides the location. Server saves are atomic. JSON backups preserve references to media; they do not embed the source files. Render jobs use an immutable project snapshot and expose progress, cancellation, and a downloadable MP4. SRT import/export works without an ASR account.
 
 **Hand off to DSH** saves the current project and adds its ID, selected clip, and playhead to the current conversation's draft. Existing draft text is preserved; you review and send it. DSH Agent can read and edit the same project using the registered tools. Saved Agent changes refresh the timeline, and concurrent edits produce a version conflict with local backup and reload actions.
 
@@ -58,21 +62,25 @@ Commit the generated `lib/` alongside source changes. `pnpm verify:dist` checks 
 
 All HTTP routes live under `/video-studio/`. The DSH host checks the connection service's `requestRejection()` before serving either API or static files. The browser has no API secrets. Media reads support byte ranges and HEAD for seeking.
 
-| Endpoint                   | Behavior                                              |
-| -------------------------- | ----------------------------------------------------- |
-| `GET api/capabilities`     | Actual ASR and rendering availability                 |
-| `GET api/projects`         | Saved projects                                        |
-| `GET api/projects/:id`     | Latest saved project and its revision                 |
-| `PUT api/projects/:id`     | Validate and atomically save a project                |
-| `POST api/assets`          | Stream a media upload into the managed asset store    |
-| `GET media/:id`            | Authenticated managed media, including Range requests |
-| `POST api/render`          | Queue an immutable project snapshot for MP4 export    |
-| `POST api/asr`             | Queue a transcription for an uploaded asset           |
-| `GET api/jobs/:id`         | Job state and progress                                |
-| `POST api/jobs/:id/cancel` | Cancel queued or running work                         |
-| `GET exports/:id.mp4`      | Download a completed render                           |
+| Endpoint                                     | Behavior                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------ |
+| `GET api/capabilities`                       | Actual ASR and rendering availability                                          |
+| `GET api/projects`                           | Saved projects                                                                 |
+| `GET api/projects?sessionId=…&scope=session` | Current session's saved projects; `scope=workspace` supports explicit browsing |
+| `GET api/workspace?sessionId=…&path=…`       | Browse a relative directory in the trusted workspace                           |
+| `GET workspace/media?sessionId=…&path=…`     | Preview a workspace media file with Range/HEAD support                         |
+| `POST api/workspace/import`                  | Import a selected workspace media file into managed storage                    |
+| `GET api/projects/:id`                       | Latest saved project and its revision                                          |
+| `PUT api/projects/:id`                       | Validate and atomically save a project                                         |
+| `POST api/assets`                            | Stream a media upload into the managed asset store                             |
+| `GET media/:id`                              | Authenticated managed media, including Range requests                          |
+| `POST api/render`                            | Queue an immutable project snapshot for MP4 export                             |
+| `POST api/asr`                               | Queue a transcription for an uploaded asset                                    |
+| `GET api/jobs/:id`                           | Job state and progress                                                         |
+| `POST api/jobs/:id/cancel`                   | Cancel queued or running work                                                  |
+| `GET exports/:id.mp4`                        | Download a completed render                                                    |
 
-For asset upload, the body is the binary file; query fields describe `name`, `kind`, `duration`, and optional `width`/`height`. Projects use versioned frame-based data. The host accepts only managed asset references for rendering. Each render receives a temporary loopback media server exposing its snapshot's asset allowlist, without giving Chromium the user's DSH login cookie.
+For asset upload, the body is the binary file; query fields describe `name`, `kind`, `duration`, and optional `width`/`height`. Workspace import accepts JSON with `sessionId`, relative `path`, `duration`, and optional `width`/`height`. Projects use versioned frame-based data. The host accepts only managed asset references for rendering. Each render receives a temporary loopback media server exposing its snapshot's asset allowlist, without giving Chromium the user's DSH login cookie.
 
 ASR requires explicit server configuration. Choose a provider/model supporting timestamped segments:
 

@@ -5,11 +5,19 @@ import type { Context } from "@deepseek-ai/cordis";
 import z from "@deepseek-ai/schemastery";
 import { StudioRuntime, type StudioConfig } from "./host/runtime";
 import { registerVideoStudioTools } from "./host/dsh-tools";
+import { sessionWorkspace } from "./host/workspace";
 
 export type { AsrProvider, AsrRequest } from "./host/asr";
 export type { StudioConfig } from "./host/runtime";
 export const name = "video-studio";
-export const inject = ["webServer", "connection", "tools"];
+export const inject = [
+  "webServer",
+  "connection",
+  "tools",
+  "sessions",
+  "sessionPersistence",
+  "workspaceRegistry",
+];
 export const Config = z.object({
   dataDir: z.string(),
   browserExecutable: z.string(),
@@ -57,6 +65,16 @@ export async function apply(
     studioDir: resolve(lib, "studio"),
     remotionDir: resolve(lib, "remotion"),
     authorize: (req) => connection.requestRejection(req),
+    resolveWorkspace: (sessionId, signal) =>
+      sessionWorkspace(
+        sessionId,
+        signal,
+        ctx.get("sessions") as unknown as Parameters<
+          typeof sessionWorkspace
+        >[2],
+        ctx.get("sessionPersistence") as Parameters<typeof sessionWorkspace>[3],
+        ctx.get("workspaceRegistry") as Parameters<typeof sessionWorkspace>[4],
+      ),
   });
   await runtime.init();
   ctx.effect(
