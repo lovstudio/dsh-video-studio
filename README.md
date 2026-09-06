@@ -15,13 +15,15 @@ npx @deepseek-ai/dsh web
 
 If DSH is already running, restart it after installation. Select a workspace and open the **Video** tab in an existing conversation. A blank conversation offers **Start editing** above the composer, without requiring a model key or sending a message. The sidebar entry helps you choose a workspace. The GitHub repository includes all runtime builds; no manual build is required.
 
-To pin a release, append its tag: `github:lovstudio/dsh-video-studio#v0.2.0`.
+To pin a release, append its tag: `github:lovstudio/dsh-video-studio#v0.2.1`.
 
 ![DSH Video Studio editor](tests/expected/editor.png)
 
+The screenshot illustrates editing a demo. New sessions start with an empty timeline; demos must be opened explicitly.
+
 ## Workspace
 
-The editor combines a media library, a frame-accurate preview, clip properties, and four timeline lanes: video, audio, titles, and captions. Import media, arrange and trim clips, split at the playhead, edit titles and captions, change volume and framing, and undo or redo edits. Portrait and square canvases share the same project model. The initial title sequence is an editable example, with no external media dependency.
+The editor combines a media library, a frame-accurate preview, clip properties, and four timeline lanes: video, audio, titles, and captions. Import media, arrange and trim clips, split at the playhead, edit titles and captions, change volume and framing, and undo or redo edits. Portrait and square canvases share the same project model. The editor restores the current session's saved project first. New sessions start with an empty timeline; the title demo can be created explicitly with Open demo. Existing projects and demos are preserved.
 
 Project JSON and managed media stay on the host. Server saves are atomic. JSON backups preserve references to media; they do not embed the source files. Render jobs use an immutable project snapshot and expose progress, cancellation, and a downloadable MP4. SRT import/export works without an ASR account.
 

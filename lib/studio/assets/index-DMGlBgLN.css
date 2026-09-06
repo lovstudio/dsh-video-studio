@@ -1220,6 +1220,45 @@ small {
   margin-top: 12px;
   font-size: 10px;
 }
+.empty-actions {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+  display: flex;
+}
+.canvas-empty button {
+  pointer-events: auto;
+}
+.empty-actions button svg {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+.empty-demo {
+  color: var(--stage-text);
+  text-underline-offset: 4px;
+  margin-top: 14px;
+  font-size: 11px;
+  text-decoration: underline;
+}
+.studio-start {
+  text-align: center;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  min-height: 100%;
+  padding: 24px;
+  display: flex;
+}
+.studio-start h2 {
+  font-size: 16px;
+  font-weight: 500;
+}
+.studio-start p {
+  color: var(--muted-foreground);
+}
 .player-error {
   text-align: center;
   background: var(--stage);

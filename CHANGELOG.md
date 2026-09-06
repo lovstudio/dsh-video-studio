@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Restore each DSH session’s saved project on startup, including after browser recovery storage is cleared.
+- Start new sessions with a workspace-bound empty project; create the demo only when explicitly requested.
+- Preserve unsaved recovery branches and existing projects while keeping automatic project selection scoped to the current session.
+
 ## 0.2.0
 
 - Replace the fullscreen workbench overlay with a native DSH conversation Video tab and an inline editor for blank conversations.

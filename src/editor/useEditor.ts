@@ -7,74 +7,33 @@ import {
   type ProjectRecovery,
   type SaveState,
 } from "./projectSaves";
+import {
+  projectRecoveryKey,
+  readProjectRecovery,
+  selectProjectRecovery,
+  type EditorStart,
+} from "./projectRecovery";
 
 export type { SaveState } from "./projectSaves";
+export type { EditorStart } from "./projectRecovery";
 
-const sessionId = new URLSearchParams(location.search).get("sessionId");
-const RECOVERY_KEY = `dsh-video-studio-recovery-v1${sessionId ? `:${sessionId}` : ""}`;
-const PROJECT_KEY = `${RECOVERY_KEY}:project:`;
-
-function parseRecovery(value: unknown): ProjectRecovery {
-  const raw = value as {
-    project?: unknown;
-    revision?: unknown;
-    dirty?: unknown;
-  };
-  return {
-    project: projectSchema.parse(raw.project ?? value),
-    revision:
-      raw.revision === null || typeof raw.revision === "string"
-        ? raw.revision
-        : undefined,
-    dirty: raw.dirty !== false,
-  };
-}
-
-function initialRecovery(): {
-  active: ProjectRecovery;
-  records: ProjectRecovery[];
-  fresh: boolean;
-} {
-  const records = new Map<string, ProjectRecovery>();
-  let activeId: string | undefined;
+function initialRecovery(start: EditorStart) {
+  let stored: ReturnType<typeof readProjectRecovery> = { records: [] };
   try {
-    for (let index = 0; index < localStorage.length; index += 1) {
-      const key = localStorage.key(index);
-      if (!key?.startsWith(PROJECT_KEY)) continue;
-      try {
-        const record = parseRecovery(
-          JSON.parse(localStorage.getItem(key) || "null"),
-        );
-        records.set(record.project.id, record);
-      } catch {
-        /* One damaged document must not hide other recoveries. */
-      }
-    }
-    const previous = JSON.parse(localStorage.getItem(RECOVERY_KEY) || "null");
-    if (previous?.activeProjectId) activeId = previous.activeProjectId;
-    else if (previous) {
-      const legacy = parseRecovery(previous);
-      if (!records.has(legacy.project.id))
-        records.set(legacy.project.id, legacy);
-      activeId = legacy.project.id;
-    }
+    stored = readProjectRecovery(localStorage, start.scope);
   } catch {
     /* Browser storage may be unavailable. Server saves still work. */
   }
-  const restored = activeId ? records.get(activeId) : undefined;
-  const active = restored ?? {
-    project: createProject(),
-    revision: null,
-    dirty: true,
+  return {
+    ...selectProjectRecovery(start, stored, createProject(false)),
+    key: projectRecoveryKey(start.scope),
   };
-  records.set(active.project.id, active);
-  return { active, records: [...records.values()], fresh: !restored };
 }
 
-function persistRecord(record: ProjectRecovery): void {
+function persistRecord(key: string, record: ProjectRecovery): void {
   try {
     localStorage.setItem(
-      `${PROJECT_KEY}${record.project.id}`,
+      `${key}:project:${record.project.id}`,
       JSON.stringify({
         project: record.project,
         revision: record.revision,
@@ -86,16 +45,16 @@ function persistRecord(record: ProjectRecovery): void {
   }
 }
 
-function persistSelection(id: string): void {
+function persistSelection(key: string, id: string): void {
   try {
-    localStorage.setItem(RECOVERY_KEY, JSON.stringify({ activeProjectId: id }));
+    localStorage.setItem(key, JSON.stringify({ activeProjectId: id }));
   } catch {
     /* Server persistence remains available. */
   }
 }
 
-export function useEditor() {
-  const [initial] = useState(initialRecovery);
+export function useEditor(start: EditorStart = {}) {
+  const [initial] = useState(() => initialRecovery(start));
   const [project, setProject] = useState(initial.active.project);
   const current = useRef(project),
     fresh = useRef(initial.fresh);
@@ -113,7 +72,7 @@ export function useEditor() {
       initial.records,
     );
     // A request may settle after the editor unmounts; its committed recovery must still be recorded.
-    coordinator.subscribe(persistRecord);
+    coordinator.subscribe((record) => persistRecord(initial.key, record));
     return coordinator;
   });
   const past = useRef<Project[]>([]),
@@ -151,10 +110,10 @@ export function useEditor() {
       setProject(next);
       saves.edit(next);
       setSave(saves.get(next.id).state);
-      persistRecord(saves.get(next.id));
+      persistRecord(initial.key, saves.get(next.id));
       updateHistory();
     },
-    [saves, updateHistory],
+    [saves, updateHistory, initial.key],
   );
   const edit = useCallback(
     (change: (value: Project) => Project) => {
@@ -195,10 +154,10 @@ export function useEditor() {
       setProject(restored.project);
       setSave(restored.state);
       updateHistory();
-      persistRecord(restored);
-      persistSelection(restored.project.id);
+      persistRecord(initial.key, restored);
+      persistSelection(initial.key, restored.project.id);
     },
-    [cancelDebounce, saves, updateHistory],
+    [cancelDebounce, saves, updateHistory, initial.key],
   );
 
   const saveNow = useCallback(async () => {
@@ -215,15 +174,15 @@ export function useEditor() {
   useEffect(() => {
     cancelDebounce();
     const record = saves.get(project.id);
-    persistRecord(record);
-    persistSelection(project.id);
+    persistRecord(initial.key, record);
+    persistSelection(initial.key, project.id);
     if (record.dirty)
       timer.current = setTimeout(() => {
         timer.current = undefined;
         void saves.enqueue(project.id);
       }, 700);
     return cancelDebounce;
-  }, [project, saves, cancelDebounce]);
+  }, [project, saves, cancelDebounce, initial.key]);
 
   const acceptServer = useCallback(
     (remote: Project, force = false) => {

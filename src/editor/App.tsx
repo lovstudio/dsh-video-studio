@@ -69,7 +69,7 @@ import type {
   StudioJob,
 } from "../types";
 import { API, download, request, uploadMedia } from "./api";
-import { useEditor } from "./useEditor";
+import { useEditor, type EditorStart } from "./useEditor";
 import { Inspector } from "./Inspector";
 import { Timeline } from "./Timeline";
 import { IconButton } from "./ui";
@@ -137,6 +137,63 @@ function Modal({
   );
 }
 export function App() {
+  const dsh = useDsh();
+  const startup = useQuery({
+    queryKey: [
+      "studio-session-projects",
+      dsh.context?.workspacePath,
+      dsh.context?.sessionId,
+    ],
+    queryFn: ({ signal }) =>
+      request<Project[]>("projects", {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+      }),
+    enabled: dsh.embedded && !!dsh.context,
+    networkMode: "always",
+    retry: false,
+  });
+  if (dsh.embedded && (!dsh.context || !startup.data))
+    return (
+      <div className="studio-start" role={startup.isError ? "alert" : "status"}>
+        {startup.isError ? <CircleAlert /> : <LoaderCircle className="spin" />}
+        <h2>{startup.isError ? "暂时无法读取会话工程" : "正在打开会话工程"}</h2>
+        <p>
+          {startup.isError
+            ? startup.error.message
+            : dsh.context
+              ? "正在恢复这个会话中保存的作品。"
+              : "正在连接 DSH，请确认当前会话已选择工作区。"}
+        </p>
+        {startup.isError && (
+          <button
+            className="secondary-button"
+            onClick={() => void startup.refetch()}
+          >
+            重试
+          </button>
+        )}
+      </div>
+    );
+  return (
+    <Editor
+      key={
+        dsh.context
+          ? `${dsh.context.workspacePath}:${dsh.context.sessionId}`
+          : "standalone"
+      }
+      dsh={dsh}
+      start={{ scope: dsh.context, projects: startup.data }}
+    />
+  );
+}
+
+function Editor({
+  dsh,
+  start,
+}: {
+  dsh: ReturnType<typeof useDsh>;
+  start: EditorStart;
+}) {
   const {
     project,
     edit,
@@ -150,9 +207,7 @@ export function App() {
     saveNow,
     acceptServer,
     reload,
-    fresh,
-  } = useEditor();
-  const dsh = useDsh();
+  } = useEditor(start);
   const [handoffBusy, setHandoffBusy] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(
       project.clips[0]?.id || null,
@@ -209,12 +264,6 @@ export function App() {
   useEffect(() => {
     if (remoteProject.data) acceptServer(remoteProject.data);
   }, [remoteProject.data, acceptServer]);
-  useEffect(() => {
-    if (!dsh.context || !fresh.current || current.current.dsh) return;
-    fresh.current = false;
-    const { workspacePath, sessionId } = dsh.context;
-    edit((value) => ({ ...value, dsh: { workspacePath, sessionId } }));
-  }, [dsh.context, edit, fresh, current]);
   const renderJob = useQuery({
     queryKey: ["studio-job", renderId],
     queryFn: ({ signal }) => request<StudioJob>(`jobs/${renderId}`, { signal }),
@@ -285,6 +334,14 @@ export function App() {
   useEffect(() => {
     if (frame >= duration) seek(duration - 1);
   }, [duration, frame, seek]);
+  useEffect(() => {
+    const opened = current.current;
+    seek(
+      opened.name === "灵感成片 · 开场练习" && opened.clips.length === 3
+        ? 45
+        : 0,
+    );
+  }, [project.id, current, seek]);
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const ctx = gsap.context(() => {
@@ -582,6 +639,22 @@ export function App() {
     setProjectsOpen(false);
     setMenuOpen(false);
   };
+  const newProject = (demo = false) => {
+    const next = createProject(demo);
+    if (dsh.context) {
+      const { workspacePath, sessionId, sessionTitle } = dsh.context;
+      next.dsh = { workspacePath, sessionId };
+      if (!demo && sessionTitle?.trim())
+        next.name = sessionTitle.trim().slice(0, 240);
+    }
+    loadProject(next);
+  };
+  const visibleProjects = projects.data?.filter(
+    (item) =>
+      !dsh.context ||
+      !item.dsh ||
+      item.dsh.workspacePath === dsh.context.workspacePath,
+  );
   const handoff = async () => {
     if (!dsh.context) return;
     setHandoffBusy(true);
@@ -704,23 +777,13 @@ export function App() {
               </IconButton>
               {menuOpen && (
                 <div className="dropdown-menu">
-                  <button
-                    onClick={() =>
-                      loadProject({
-                        ...createProject(false),
-                        ...(dsh.context
-                          ? {
-                              dsh: {
-                                workspacePath: dsh.context.workspacePath,
-                                sessionId: dsh.context.sessionId,
-                              },
-                            }
-                          : {}),
-                      })
-                    }
-                  >
+                  <button onClick={() => newProject()}>
                     <FilePlus2 />
                     新建空白工程
+                  </button>
+                  <button onClick={() => newProject(true)}>
+                    <Film />
+                    打开示例工程
                   </button>
                   <button
                     onClick={() => {
@@ -1355,8 +1418,29 @@ export function App() {
             {!project.clips.length && (
               <div className="canvas-empty">
                 <Film />
-                <h2>空白，也是开始。</h2>
-                <p>导入素材或添加标题，开启你的作品。</p>
+                <h2>
+                  {dsh.embedded ? "从这个会话开始创作" : "从空白开始创作"}
+                </h2>
+                <p>导入素材或添加标题，作品会自动保存在当前工程。</p>
+                <div className="empty-actions">
+                  <button
+                    className="secondary-button"
+                    onClick={() => fileInput.current?.click()}
+                  >
+                    <Upload />
+                    导入素材
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setPanel("titles")}
+                  >
+                    <Type />
+                    添加标题
+                  </button>
+                </div>
+                <button className="empty-demo" onClick={() => newProject(true)}>
+                  打开示例工程
+                </button>
               </div>
             )}
           </div>
@@ -1486,12 +1570,11 @@ export function App() {
       {projectsOpen && (
         <Modal title="你的作品" onClose={() => setProjectsOpen(false)}>
           <p className="modal-description">
-            工程与素材保存在当前机器。每一次修改都会自动保存。
+            {dsh.embedded
+              ? "默认恢复本会话的作品，也可手动打开工作区中的其他工程。"
+              : "工程与素材保存在当前机器。每一次修改都会自动保存。"}
           </p>
-          <button
-            className="secondary-button"
-            onClick={() => loadProject(createProject(false))}
-          >
+          <button className="secondary-button" onClick={() => newProject()}>
             <Plus />
             新建空白工程
           </button>
@@ -1511,12 +1594,12 @@ export function App() {
                   重试
                 </button>
               </p>
-            ) : !projects.data?.length ? (
+            ) : !visibleProjects?.length ? (
               <p className="help-text">
                 还没有保存的工程。当前作品将在编辑后自动保存。
               </p>
             ) : (
-              projects.data?.map((p) => (
+              visibleProjects?.map((p) => (
                 <button key={p.id} onClick={() => loadProject(p)}>
                   <div className="project-mark">
                     <Film />
@@ -1524,6 +1607,12 @@ export function App() {
                   <div>
                     <strong>{p.name}</strong>
                     <span>
+                      {dsh.context &&
+                        (p.dsh?.sessionId === dsh.context.sessionId
+                          ? "本会话 · "
+                          : p.dsh
+                            ? "同工作区 · "
+                            : "未关联 · ")}
                       {p.width} × {p.height} ·{" "}
                       {formatTime(durationInFrames(p), p.fps)} ·{" "}
                       {new Date(p.updatedAt).toLocaleString("zh-CN", {

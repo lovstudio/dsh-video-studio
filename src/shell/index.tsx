@@ -371,7 +371,7 @@ function StudioFrame(props: ViewProps & { inline?: boolean }): ReactNode {
 function VideoView(props: ViewProps): ReactNode {
   return (
     <div className="dsh-vs-native" data-conversation-composer-overlay="">
-      <StudioFrame {...props} />
+      <StudioFrame key={props.sessionId} {...props} />
     </div>
   );
 }

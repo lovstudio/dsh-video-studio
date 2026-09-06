@@ -1,7 +1,9 @@
 import type { Project } from "../types";
 import { type SaveState } from "./projectSaves";
+import { type EditorStart } from "./projectRecovery";
 export type { SaveState } from "./projectSaves";
-export declare function useEditor(): {
+export type { EditorStart } from "./projectRecovery";
+export declare function useEditor(start?: EditorStart): {
     project: Project;
     edit: (change: (value: Project) => Project) => void;
     undo: () => void;
